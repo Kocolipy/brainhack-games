@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>SAF Transport - SAFTI City</title>
+<style>
+  body { margin: 0; height: 100dvh; overflow: hidden; background: #000; font-family: sans-serif;
+         touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; }
+  #hud { position: absolute; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+         color: #fff; font-size: clamp(12px, 2.2vmin + 4px, 18px); text-shadow: 0 0 4px #000; pointer-events: none; }
+  #job { font-size: 1.25em; font-weight: bold; color: #fd4; }
+  #msg { position: absolute; top: 30%; width: 100%; text-align: center; color: #fff; font: bold clamp(18px, 5vmin, 32px) sans-serif;
+         text-shadow: 0 0 6px #000; pointer-events: none; }
+  #map { position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
+         width: min(34vmin, 220px); height: min(34vmin, 220px); border-radius: 50%; border: 4px solid #2a3318; box-shadow: 0 0 8px #000; }
+  /* touch controls: drag pad (left thumb) + pedals (right thumb), shown only on touch screens */
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  body.touch #keys { display: none; }
+  #steerpad { position: absolute; left: max(2vw, env(safe-area-inset-left)); bottom: 3vh; width: 38vw; height: 34vh;
+              border-radius: 24px; background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.25); }
+  #steerpad::after { content: '◀ drag to steer ▶'; position: absolute; bottom: 8px; width: 100%; text-align: center;
+                     color: rgba(255,255,255,0.6); font-size: 13px; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px; border-radius: 50%;
+          background: rgba(255,255,255,0.35); border: 2px solid #fff; }
+  .pedal { position: absolute; bottom: 3vh; display: flex; align-items: center; justify-content: center;
+           color: #fff; font: bold 16px sans-serif; border-radius: 18px; border: 2px solid rgba(255,255,255,0.6); }
+  #gas { right: max(2vw, env(safe-area-inset-right)); width: 15vw; height: 38vh; background: rgba(40,160,60,0.45); }
+  #brake { right: calc(max(2vw, env(safe-area-inset-right)) + 17vw); width: 15vw; height: 24vh; background: rgba(200,50,40,0.45); }
+  .pedal.on { filter: brightness(1.8); }
+  #rotate { display: none; position: absolute; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
+            align-items: center; justify-content: center; text-align: center; z-index: 9; }
+  @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<div id="hud"><div id="job"></div><div id="info"></div><div id="keys">W/S or ↑/↓ drive &middot; A/D or ←/→ steer &middot; Space brake</div></div>
+<div id="msg"></div>
+<canvas id="map" width="220" height="220"></canvas>
+<div id="touch">
+  <div id="steerpad"><div id="knob"></div></div>
+  <div id="brake" class="pedal">BRAKE<br>/ REV</div>
+  <div id="gas" class="pedal">GAS</div>
+</div>
+<div id="rotate">↻<br>Rotate your phone to landscape</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const $ = id => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));  // phones report 3x; 2x is plenty and much cheaper
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cc4e4);
+scene.fog = new THREE.Fog(0x9cc4e4, 100, 380);
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x445533, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(80, 150, 40);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 900);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+const load = name => new GLTFLoader().loadAsync(`assets/${name}.glb`).then(g => g.scene);
+const [city, cab] = await Promise.all([load('city'), load('cab')]);
+scene.add(city);
+city.updateMatrixWorld(true);
+
+// pull gameplay data out of the Blender extras (userData)
+const rect = o => { const b = new THREE.Box3().setFromObject(o); return { x0: b.min.x, z0: b.min.z, x1: b.max.x, z1: b.max.z }; };
+const bldgs = [], roofs = [], depots = [];
+let beacon, wheel, roads = [], EDGE = 230;
+city.traverse(o => {
+  if (o.userData.kind === 'bldg') bldgs.push(rect(o));
+  if (o.userData.roads) { roads = JSON.parse(o.userData.roads).map(r => ({ w: r.pop(), pts: r.map(([x, y]) => [x, -y]) })); EDGE = o.userData.edge; }  // Blender y -> three -z
+  if (o.userData.kind === 'roof') roofs.push(rect(o));
+  if (o.userData.kind === 'beacon') beacon = o;
+  if (o.userData.depot) { const r = rect(o); depots.push({ name: o.userData.depot, x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2, r }); }
+});
+beacon.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.35; o.material.depthWrite = false; } });
+cab.traverse(o => { if (o.userData.kind === 'wheel') wheel = o; });
+const wheelRest = wheel.quaternion.clone();
+console.assert(depots.length >= 10 && bldgs.length > 60 && roofs.length && roads.length && wheel, 'city/cab data missing');
+
+// truck: group at the rear axle, cab + camera at the driver's eye (right-hand drive, cab-over)
+const truck = new THREE.Group();
+const eye = new THREE.Vector3(0.55, 2.6, -3.0);
+cab.position.copy(eye);
+camera.position.copy(eye);
+camera.rotation.x = -0.14;
+truck.add(cab, camera);
+scene.add(truck);
+const motorPool = depots.find(d => d.name === 'Motor Pool');
+truck.position.set(motorPool.x, 0, motorPool.z);
+
+// input: keyboard, plus touch drag-pad and pedals
+let speed = 0, steer = 0, heading = 0, touchSteer = 0;
+const keys = {}, pedal = { gas: false, brake: false };
+addEventListener('keydown', e => keys[e.code] = true);
+addEventListener('keyup', e => keys[e.code] = false);
+const key = (...c) => c.some(k => keys[k]);
+if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
+addEventListener('touchstart', () => {
+  document.body.classList.add('touch');
+  document.documentElement.requestFullscreen?.().catch(() => {});  // hide browser bars where allowed (not iOS Safari)
+}, { once: true });
+const pad = $('steerpad'), knob = $('knob');
+let steerId = null, steerX0 = 0;
+pad.addEventListener('pointerdown', e => { steerId = e.pointerId; steerX0 = e.clientX; pad.setPointerCapture(e.pointerId); });
+pad.addEventListener('pointermove', e => {
+  if (e.pointerId !== steerId) return;
+  const range = pad.clientWidth * 0.35;
+  touchSteer = Math.max(-1, Math.min(1, (steerX0 - e.clientX) / range));
+  knob.style.transform = `translateX(${-touchSteer * range}px)`;
+});
+const endSteer = e => { if (e.pointerId === steerId) { steerId = null; touchSteer = 0; knob.style.transform = ''; } };
+pad.addEventListener('pointerup', endSteer);
+pad.addEventListener('pointercancel', endSteer);
+for (const id of ['gas', 'brake']) {
+  const el = $(id), set = on => { pedal[id] = on; el.classList.toggle('on', on); };
+  el.addEventListener('pointerdown', e => { set(true); el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointerup', () => set(false));
+  el.addEventListener('pointercancel', () => set(false));
+}
+addEventListener('contextmenu', e => e.preventDefault());  // long-press on pedals
+
+// jobs: pick up at one depot, deliver to another
+let job, loaded = false, delivered = 0, msgTimer = 0;
+const say = t => { $('msg').textContent = t; msgTimer = 3; };
+function newJob(from) {
+  const others = depots.filter(d => d !== motorPool);  // first pickup is never where we start
+  const pick = from ?? others[Math.floor(Math.random() * others.length)];
+  const rest = depots.filter(d => d !== pick);
+  job = { from: pick, to: rest[Math.floor(Math.random() * rest.length)] };
+  loaded = !!from;  // chained jobs start loaded at the depot we just reached
+}
+newJob(null);
+const target = () => loaded ? job.to : job.from;
+const onPad = (d, p) => p.x > d.r.x0 && p.x < d.r.x1 && p.z > d.r.z0 && p.z < d.r.z1;
+
+// circle-vs-box push-out; returns true on contact
+function collide(p, rad) {
+  let hit = false;
+  for (const b of bldgs) {
+    const cx = Math.max(b.x0, Math.min(p.x, b.x1)), cz = Math.max(b.z0, Math.min(p.z, b.z1));
+    const dx = p.x - cx, dz = p.z - cz, d = Math.hypot(dx, dz);
+    if (d < rad) {
+      hit = true;
+      if (d > 1e-6) { p.x = cx + dx / d * rad; p.z = cz + dz / d * rad; }
+      else {  // centre inside the box: exit through the nearest side
+        const [, ax, to] = [[p.x - b.x0, 'x', b.x0 - rad], [b.x1 - p.x, 'x', b.x1 + rad],
+                            [p.z - b.z0, 'z', b.z0 - rad], [b.z1 - p.z, 'z', b.z1 + rad]].sort((u, v) => u[0] - v[0])[0];
+        p[ax] = to;
+      }
+    }
+  }
+  return hit;
+}
+// self-checks: a point inside a building gets pushed out; the truck starts clear of buildings
+{ const b = bldgs[0], p = { x: b.x0 + 0.1, z: (b.z0 + b.z1) / 2 }; console.assert(collide(p, 2) && p.x <= b.x0 - 1.99, 'collision push-out'); }
+console.assert(!collide({ x: motorPool.x, z: motorPool.z - 2.5 }, 3), 'start position blocked');
+
+const map = $('map').getContext('2d');
+const MAP_SCALE = 0.8;  // px per metre -> ~135 m radius visible
+function drawMap(t) {
+  const W = 220, c = W / 2;
+  map.save();
+  map.fillStyle = '#556b2f'; map.fillRect(0, 0, W, W);
+  map.translate(c, c);
+  map.rotate(heading);  // heading-up
+  map.scale(MAP_SCALE, MAP_SCALE);
+  map.translate(-truck.position.x, -truck.position.z);
+  const fill = (r, col) => { map.fillStyle = col; map.fillRect(r.x0, r.z0, r.x1 - r.x0, r.z1 - r.z0); };
+  map.strokeStyle = '#3a3a3a'; map.lineCap = map.lineJoin = 'round';
+  for (const r of roads) {
+    map.lineWidth = r.w; map.beginPath();
+    r.pts.forEach(([x, z], i) => i ? map.lineTo(x, z) : map.moveTo(x, z));
+    map.stroke();
+  }
+  depots.forEach(d => fill(d.r, d === target() ? `hsl(48,100%,${50 + 15 * Math.sin(t * 6)}%)` : '#4a7ab0'));
+  bldgs.forEach(b => fill(b, '#cfc9b8'));
+  roofs.forEach(b => fill(b, 'rgba(207,201,184,0.35)'));  // drive-through canopy
+  map.restore();
+  // objective arrow pinned to the rim when off-map
+  const tg = target(), dx = tg.x - truck.position.x, dz = tg.z - truck.position.z;
+  const a = Math.atan2(dz, dx) + heading, dist = Math.hypot(dx, dz) * MAP_SCALE;
+  if (dist > c - 14) {
+    map.save(); map.translate(c + Math.cos(a) * (c - 14), c + Math.sin(a) * (c - 14)); map.rotate(a);
+    map.fillStyle = '#fd4'; map.beginPath(); map.moveTo(10, 0); map.lineTo(-6, -7); map.lineTo(-6, 7); map.fill(); map.restore();
+  }
+  // truck marker
+  map.fillStyle = '#e33'; map.beginPath(); map.moveTo(c, c - 9); map.lineTo(c - 6, c + 6); map.lineTo(c + 6, c + 6); map.fill();
+}
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  // drive: throttle / brake-then-reverse, rolling drag
+  const fwd = key('KeyW', 'ArrowUp') || pedal.gas, back = key('KeyS', 'ArrowDown') || pedal.brake;
+  if (fwd) speed += (speed < 0 ? 10 : 3.5) * dt;
+  if (back) speed -= (speed > 0 ? 10 : 2.5) * dt;
+  if (key('Space')) speed -= Math.sign(speed) * Math.min(Math.abs(speed), 14 * dt);
+  speed -= speed * 0.15 * dt;
+  speed = Math.max(-5, Math.min(speed, 16));  // ~58 km/h top speed
+  const steerIn = Math.max(-1, Math.min(1, key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') + touchSteer));
+  steer += (steerIn * 0.6 - steer) * Math.min(1, dt * (steerIn ? 2.5 : 4));
+  heading += speed / 4.5 * Math.tan(steer) * dt;  // bicycle model, 4.5 m wheelbase
+  truck.position.x -= Math.sin(heading) * speed * dt;
+  truck.position.z -= Math.cos(heading) * speed * dt;
+  truck.rotation.y = heading;
+  // shortcut: truck is one 3 m circle at the cab, fine for a demo; use an OBB if corners clipping matters
+  const front = { x: truck.position.x - Math.sin(heading) * 2.5, z: truck.position.z - Math.cos(heading) * 2.5 };
+  const before = { ...front };
+  if (collide(front, 3)) { truck.position.x += front.x - before.x; truck.position.z += front.z - before.z; if (Math.abs(speed) > 3) say('CRASH! Drive carefully'); speed *= -0.2; }
+  truck.position.x = Math.max(-EDGE, Math.min(truck.position.x, EDGE));
+  truck.position.z = Math.max(-EDGE, Math.min(truck.position.z, EDGE));
+  wheel.quaternion.copy(wheelRest).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), steer * 4));
+
+  // objective: stop on the depot's pad
+  const tg = target();
+  beacon.position.set(tg.x, beacon.position.y, tg.z);
+  const dist = Math.hypot(tg.x - truck.position.x, tg.z - truck.position.z);
+  if (onPad(tg, truck.position) && Math.abs(speed) < 1.5) {
+    if (!loaded) { loaded = true; say(`Cargo loaded at ${tg.name}`); }
+    else { delivered++; say(`Delivered to ${tg.name}!`); newJob(tg); }
+  }
+  $('job').textContent = loaded ? `DELIVER to ${job.to.name}` : `PICK UP at ${job.from.name}`;
+  $('info').textContent = `${Math.round(Math.abs(speed) * 3.6)} km/h${speed < -0.1 ? ' (R)' : ''} · ${Math.round(dist)} m · Deliveries: ${delivered}`;
+  if ((msgTimer -= dt) < 0) $('msg').textContent = '';
+
+  drawMap(t);
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
