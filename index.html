@@ -44,7 +44,7 @@
   /* phones/tablets held sideways: black out and pause (desktop windows are landscape too, so they're exempt) */
   #rotate { position: fixed; inset: 0; z-index: 10; background: #000; color: #666; display: none;
             align-items: center; justify-content: center; font: bold 16px sans-serif; letter-spacing: 2px; }
-  @media (orientation: landscape) and (pointer: coarse) { #rotate { display: flex; } }
+  body.sideways #rotate { display: flex; }
 </style>
 </head>
 <body>
@@ -365,8 +365,12 @@ function updateBoss(b, dt) {
 
 // --- loop ---
 const clock = new THREE.Clock(), bar = document.getElementById('bar'), ahead = new THREE.Vector3();
-const paused = matchMedia('(orientation: landscape) and (pointer: coarse)'); // same rule as the #rotate CSS
+// Touch screens held wider than tall pause the game. maxTouchPoints, not (pointer: coarse): some Android
+// browsers (stylus phones, Samsung Internet desktop mode) report a fine pointer and slipped past the CSS check.
+const touch = navigator.maxTouchPoints > 0 || matchMedia('(any-pointer: coarse)').matches;
+const paused = { get matches() { return touch && innerWidth > innerHeight; } };
 renderer.setAnimationLoop(() => {
+  document.body.classList.toggle('sideways', paused.matches);
   if (paused.matches) { clock.getDelta(); charging = false; return; } // frozen; discard the elapsed time so nothing jumps on resume
   const dt = Math.min(clock.getDelta(), 0.05);
   turret.rotation.y = Math.atan2(-aimDir.x, -aimDir.z) - player.rotation.y; // turret angle is relative to the hull
