@@ -208,6 +208,11 @@ function aim(e) {
 addEventListener('pointermove', aim);
 let reload = 0;
 addEventListener('pointerdown', e => { if (paused.matches) return; aim(e); if (hp > 0) { charging = true; charge = 0; } });
+// Touch devices: go fullscreen on the first tap (hides the address bar on Android; iPhones don't support it).
+// Requested on release, since browsers only count a lifted finger as a tap for this.
+addEventListener('pointerup', () => {
+  if (touch && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+});
 addEventListener('pointerup', () => {
   if (!charging) return;
   charging = false;
