@@ -63,6 +63,7 @@ const IMG = {};
 for (const n of [...LANES, ...SEV].map(o => o.icon)) { IMG[n] = new Image(); IMG[n].src = `assets/${n}.png`; }
 const DEPLOY_TIME = 2;  // days to deploy a fix
 const SPAWN_RATE = 1.25;  // exploit spawn rate multiplier
+const EXPLOIT_SPEED = 1.5;  // exploit travel speed multiplier on top of SEV speeds
 const days = (t, round = Math.floor) => { const d = round(t); return `${d} day${d === 1 ? '' : 's'}`; };  // 1 s of play = 1 day held
 
 let S;  // game state
@@ -95,7 +96,7 @@ function update(dt) {
     S.exploits.push({ lane: Math.floor(Math.random() * LANES.length), sev: pickSev(), y: 0 });
   }
   for (const e of S.exploits) {
-    e.y += SEV[e.sev].speed * (1 + ramp * 0.6) * dt;
+    e.y += SEV[e.sev].speed * EXPLOIT_SPEED * (1 + ramp * 0.6) * dt;
     if (e.y >= 1) S.hits[e.lane].push(e);
   }
   S.exploits = S.exploits.filter(e => e.y < 1);
@@ -135,7 +136,7 @@ console.assert(S.deploy && S.hits[2].length === 2, 'still deploying before 2 day
 update(0.11);
 console.assert(!S.deploy && S.hits[2].length === 1 && S.hits[2][0] === late, 'fix patches the breach and the in-flight low, not the late one');
 console.assert(!S.exploits.includes(low) && S.patched === 2, 'in-flight exploit removed by the fix');
-console.assert(Math.abs(S.health - (100 - 6 * 2 - 2.25 * 1.4)) < 0.8, 'critical drained ~6%/s, high ~2.25%/s');
+console.assert(Math.abs(S.health - (100 - 6 * 2 - 2.25 * 1.6)) < 0.8, 'critical drained ~6%/s, high ~2.25%/s');
 
 // layout, in CSS pixels of the play column
 let W, H, dpr;
