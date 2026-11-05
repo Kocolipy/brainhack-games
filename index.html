@@ -153,7 +153,7 @@ const vel = new THREE.Vector3(), netPos = new THREE.Vector3(), netVel = new THRE
 let heading = 0;
 
 // enemy drones wander and flee when the net comes near
-const COUNT = 5;
+const COUNT = 3;
 let enemies = [], caught = 0, time = 0, over = false, msgTimer = 4;
 const ENEMY_MIN = 11.25 * 0.8;  // 80% of tree height
 const rndPoint = () => { const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
