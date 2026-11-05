@@ -183,10 +183,11 @@ addEventListener('keydown', e => keys[e.code] = true);
 addEventListener('keyup', e => keys[e.code] = false);
 const key = (...c) => c.some(k => keys[k]) ? 1 : 0;
 if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
-addEventListener('touchstart', () => {
-  document.body.classList.add('touch');
-  document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
-}, { once: true });
+addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true });
+// any click or tap goes fullscreen (again, if the player left it); not supported on iPhone Safari
+addEventListener('pointerdown', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+});
 const sticks = {};
 for (const id of ['lpad', 'rpad']) {
   const pad = $(id), knob = pad.firstElementChild, s = sticks[id] = { x: 0, y: 0, id: null };
