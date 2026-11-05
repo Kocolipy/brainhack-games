@@ -68,7 +68,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // --- tuning ---
 const CHARGE_TIME = 2; // seconds from min range (the red line) to max range
 const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the shortest shot can still reach the line
-const RELOAD_TIME = 0.5; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
+const RELOAD_TIME = 0.2; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
@@ -78,6 +78,7 @@ const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium',
 const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
 const TOTAL_SHIPS = 30, BOSS_HP = 8, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
 const BOSS_SPEED = 5, LUNGE_SPEED = 30, LUNGE_TIME = 0.4, LUNGE_EVERY = 2.25, DODGE_COOLDOWN = 2.25; // units/s, seconds
+const FINAL_CHARGE_DIST = 20; // boss midpoint this close to the red line: it stops weaving and charges straight at it
 
 // Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
 function arc(from, to, t, out) {
@@ -357,7 +358,10 @@ const bossVel = new THREE.Vector3();
 function updateBoss(b, dt) {
   const p = b.mesh.position;
   b.age += dt; b.cooldown -= dt; b.nextLunge -= dt;
-  if (b.lungeT > 0) {
+  if (lossZ - p.z < FINAL_CHARGE_DIST) b.finalCharge = true; // close in: no more standing still to be burst down
+  if (b.finalCharge) {
+    bossVel.set(0, 0, LUNGE_SPEED);
+  } else if (b.lungeT > 0) {
     b.lungeT -= dt;
     bossVel.copy(b.lunge);
   } else {
