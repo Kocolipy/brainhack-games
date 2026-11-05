@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Drone Net</title>
+<style>
+  body { margin: 0; height: 100dvh; overflow: hidden; background: #000; font-family: sans-serif;
+         touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; }
+  #hud { position: absolute; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+         color: #fff; font-size: clamp(12px, 2.2vmin + 4px, 18px); text-shadow: 0 0 4px #000; pointer-events: none; }
+  #score { font-size: 1.4em; font-weight: bold; color: #fd4; }
+  #msg { position: absolute; top: 28%; width: 100%; text-align: center; color: #fff; font: bold clamp(18px, 5vmin, 32px) sans-serif;
+         text-shadow: 0 0 6px #000; pointer-events: none; }
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  body.touch #keys { display: none; }
+  .pad { position: absolute; bottom: 4vh; width: 34vh; height: 34vh; border-radius: 50%;
+         background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.3); }
+  #lpad { left: max(3vw, env(safe-area-inset-left)); }
+  #rpad { right: max(3vw, env(safe-area-inset-right)); }
+  .pad::after { position: absolute; top: -20px; width: 100%; text-align: center; color: rgba(255,255,255,0.7); font-size: 13px; }
+  #lpad::after { content: 'up-down / strafe'; }
+  #rpad::after { content: 'move / turn'; }
+  .knob { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px; border-radius: 50%;
+          background: rgba(255,255,255,0.35); border: 2px solid #fff; pointer-events: none; }
+  #rotate { display: none; position: absolute; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
+            align-items: center; justify-content: center; text-align: center; z-index: 9; }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+  #over { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.7); color: #fff;
+          flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  #over.show, #menu.show { display: flex; }
+  #menu { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,20,50,0.92); color: #fff;
+          flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  #menu h1 { margin: 0; color: #fd4; font-size: clamp(32px, 10vmin, 64px); }
+  #menu button { margin: 8px; padding: 18px 36px; font: bold 22px sans-serif; border: 0; border-radius: 12px; background: #fd4; vertical-align: top; }
+  #menu small { display: block; max-width: 11em; font: 13px sans-serif; }
+  #over h1 { margin: 0; font-size: clamp(28px, 8vmin, 56px); }
+  #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; color: #fff; }
+  #over.crash { background: rgba(90,0,0,0.6); }
+  #over.crash h1 { color: #ff4433; }
+  #over.crash button { background: #d22; }
+  #over.win { background: rgba(0,70,20,0.6); }
+  #over.win h1 { color: #44ee66; }
+  #over.win button { background: #1a3; }
+</style>
+</head>
+<body>
+<div id="hud"><div id="score"></div><div id="time"></div>
+  <div id="keys">W/S forward/back &middot; A/D turn &middot; Q/E strafe &middot; Space up &middot; Shift down</div></div>
+<div id="msg"></div>
+<div id="touch">
+  <div id="lpad" class="pad"><div class="knob"></div></div>
+  <div id="rpad" class="pad"><div class="knob"></div></div>
+</div>
+<div id="over"><h1 id="title"></h1><p id="final"></p><div><button id="again">TRY AGAIN</button> <button id="maps">CHANGE MODE</button></div></div>
+<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a difficulty</p><div><button data-map="park">EASY<small>Park</small></button> <button data-map="city">HARD<small>City</small></button></div></div>
+<div id="rotate">↻<br>Rotate your device to landscape</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const $ = id => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cc4e4);
+scene.fog = new THREE.Fog(0x9cc4e4, 60, 220);
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x445533, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(60, 120, 30);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 500);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+// two maps: a park (trees + pillars) and a city (street grid of tower blocks); flying into anything is game over
+const ARENA = 67.5, CEIL = 25, SPAWN = new THREE.Vector3(0, 10, ARENA - 20);
+const edge = new THREE.Mesh(new THREE.TorusGeometry(ARENA, 0.3, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffdd44 }));
+edge.rotation.x = Math.PI / 2;
+scene.add(edge);
+const world = new THREE.Group();
+scene.add(world);
+const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), leafM = new THREE.MeshLambertMaterial({ color: 0x2f6b2a });
+const pillarM = new THREE.MeshLambertMaterial({ color: 0xb8b0a0 }), roofM = new THREE.MeshLambertMaterial({ color: 0x55585c });
+const winTex = (() => {  // one window per tile; building UVs are scaled so a tile is ~3 m
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 32, 32);
+  g.fillStyle = '#7d93a8'; g.fillRect(6, 8, 20, 16);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+})();
+const boxes = [], trees = [];
+let hard = false;  // hard = city map: towers, and the drone sinks unless you hold up  // collision: boxes {x, z, hw, hd, h}; trees {x, z}
+function addBox(x, z, hw, hd, h, mat) {
+  const geo = new THREE.BoxGeometry(hw * 2, h, hd * 2), uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {  // faces 0-1 are x sides (depth wide), 4-5 are z sides (width wide)
+    const face = Math.floor(i / 4);
+    uv.setXY(i, uv.getX(i) * (face < 2 ? hd * 2 : hw * 2) / 3, uv.getY(i) * h / 3);
+  }
+  const b = new THREE.Mesh(geo, mat);
+  b.position.set(x, h / 2, z);
+  world.add(b);
+  boxes.push({ x, z, hw, hd, h, mesh: b, box: new THREE.Box3().setFromObject(b) });
+}
+const nearSpawn = (x, z, hw, hd) => Math.hypot(Math.max(0, Math.abs(SPAWN.x - x) - hw), Math.max(0, Math.abs(SPAWN.z - z) - hd)) < 6;
+function buildMap(kind) {
+  world.clear();
+  boxes.length = trees.length = 0;
+  const city = hard = kind === 'city';
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 48), new THREE.MeshLambertMaterial({ color: city ? 0x4a4d52 : 0x5f8a3c }));
+  ground.rotation.x = -Math.PI / 2;
+  const grid = city ? new THREE.GridHelper(28 * 12, 12, 0xdddddd, 0xdddddd)  // lane markings down the middle of each street
+                    : new THREE.GridHelper(ARENA * 2, 36, 0x3d5c26, 0x4d7330);
+  grid.position.y = 0.02;
+  world.add(ground, grid);
+  if (city) {
+    // blocks every 28 m with streets along x = 0, ±28 ... and z = 0, ±28 ...; one or two towers per block
+    for (let bx = -4; bx < 4; bx++) for (let bz = -4; bz < 4; bz++) {
+      const cx = bx * 28 + 14, cz = bz * 28 + 14;
+      const split = Math.random() < 0.5;
+      for (const off of split ? [-4.5, 4.5] : [0]) {
+        const hw = split ? 3.5 + Math.random() : 6 + Math.random() * 2.5, hd = 6 + Math.random() * 2.5, h = 8 + Math.random() ** 1.5 * 40;
+        if (nearSpawn(cx + off, cz, hw, hd)) continue;
+        const mat = new THREE.MeshLambertMaterial({ map: winTex, color: new THREE.Color().setHSL(0.08 + Math.random() * 0.5, 0.15, 0.55 + Math.random() * 0.25), transparent: true });
+        const roof = roofM.clone();  // own materials so each tower can fade on its own
+        roof.transparent = true;
+        addBox(cx + off, cz, hw, hd, h, [mat, mat, roof, roof, mat, mat]);
+      }
+    }
+    return;
+  }
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2, r = 15 + Math.random() * (ARENA + 40);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (nearSpawn(x, z, 6, 6)) continue;
+    if (i % 4 === 0) addBox(x, z, 1.5, 1.5, 6 + Math.random() * 18, pillarM);
+    else {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, 4.5), trunkM);
+      t.position.set(x, 2.25, z);
+      const l = new THREE.Mesh(new THREE.ConeGeometry(3, 7.5, 8), leafM);
+      l.position.set(x, 7.5, z);
+      world.add(t, l);
+      trees.push({ x, z });
+    }
+  }
+}
+buildMap('park');
+
+function makeDrone(color, size) {
+  const g = new THREE.Group(), body = new THREE.MeshLambertMaterial({ color }), dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.3, size), body));
+  const rotors = [];
+  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(size * 0.15, size * 0.1, size * 1.5), dark);
+    arm.position.set(x * size * 0.5, 0, z * size * 0.5);
+    arm.rotation.y = Math.atan2(x, z);
+    const rotor = new THREE.Mesh(new THREE.BoxGeometry(size * 0.9, size * 0.03, size * 0.1), dark);
+    rotor.position.set(x * size, size * 0.2, z * size);
+    g.add(arm, rotor);
+    rotors.push(rotor);
+  }
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(size * 0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  eye.position.set(0, 0, -size * 0.5);  // marks the front
+  g.add(eye);
+  g.userData.rotors = rotors;
+  return g;
+}
+const spin = (d, dt) => d.userData.rotors.forEach((r, i) => r.rotation.y += (i % 2 ? 40 : -40) * dt);
+
+// player drone, with a net curtain hanging from a bar under its belly; the curtain swings like a pendulum
+const player = makeDrone(0x3366ff, 1.2);
+scene.add(player);
+// net: one top bar (half-length NW) under the drone, curtain H tall billowing back by BILLOW
+const NW = 2.2, H = 6.5, BILLOW = 0.8, BAR_Y = 0.35;
+const net = new THREE.Group();
+net.add(new THREE.Mesh(new THREE.BoxGeometry(NW * 2, 0.18, 0.18), new THREE.MeshLambertMaterial({ color: 0x222222 })));
+const curtain = (x, y) => new THREE.Vector3(x, y, BILLOW * (1 - (x / NW) ** 2) * -y / H);
+const pts = [], CX = 18, CY = 27;  // square mesh cells like a real capture net
+for (let i = 0; i <= CX; i++) for (let j = 0; j < CY; j++) pts.push(curtain(-NW + 2 * NW * i / CX, -H * j / CY), curtain(-NW + 2 * NW * i / CX, -H * (j + 1) / CY));
+for (let j = 0; j <= CY; j++) for (let i = 0; i < CX; i++) pts.push(curtain(-NW + 2 * NW * i / CX, -H * j / CY), curtain(-NW + 2 * NW * (i + 1) / CX, -H * j / CY));
+const bag = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x111111 }));
+net.add(bag);
+scene.add(net);
+
+const vel = new THREE.Vector3(), netPos = new THREE.Vector3(), netVel = new THREE.Vector3();
+let heading = 0;
+
+// enemy drones wander and flee when the net comes near
+const COUNT = 3;
+let enemies = [], caught = 0, time = 0, over = false, msgTimer = 4;
+const ENEMY_MIN = 11.25 * 0.8;  // 80% of tree height
+function rndPoint() {  // a random open spot (not inside a building) for enemies to spawn at or head to
+  for (;;) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
+    const p = new THREE.Vector3(Math.cos(a) * r, ENEMY_MIN + Math.random() * (CEIL - 4 - ENEMY_MIN), Math.sin(a) * r);
+    if (!tooClose(p)) return p;
+  }
+}
+function reset() {
+  crashT = 0;
+  flames.forEach(f => f.visible = false);
+  enemies.forEach(e => scene.remove(e.mesh));
+  bag.clear();
+  enemies = Array.from({ length: COUNT }, () => {
+    const mesh = makeDrone(0xdd3322, 0.7);
+    mesh.position.copy(rndPoint());
+    scene.add(mesh);
+    return { mesh, target: rndPoint(), vel: new THREE.Vector3() };
+  });
+  player.position.copy(SPAWN);
+  heading = 0; vel.set(0, 0, 0);
+  netPos.copy(player.position).y -= BAR_Y + H; netVel.set(0, 0, 0);
+  caught = 0; time = 0; over = false;
+  $('score').textContent = `Caught 0 / ${COUNT}`; $('time').textContent = '0.0 s';
+  say("Fly your net into the red drones!"); msgTimer = 4;  // also clears the self-check's "Caught!" message
+  $('over').className = '';
+}
+$('again').onclick = reset;
+function showMenu() { over = true; $('over').className = ''; $('msg').textContent = ''; $('menu').className = 'show'; }
+$('maps').onclick = showMenu;
+document.querySelectorAll('#menu button').forEach(b => b.onclick = () => { buildMap(b.dataset.map); reset(); $('menu').className = ''; });
+
+// input: keyboard, plus two touch joysticks
+const keys = {};
+addEventListener('keydown', e => keys[e.code] = true);
+addEventListener('keyup', e => keys[e.code] = false);
+const key = (...c) => c.some(k => keys[k]) ? 1 : 0;
+if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
+addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true });
+// any click or tap goes fullscreen (again, if the player left it); not supported on iPhone Safari
+addEventListener('pointerup', () => {  // pointerup, not down: browsers only allow fullscreen from a touch once the finger lifts
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+});
+const sticks = {};
+for (const id of ['lpad', 'rpad']) {
+  const pad = $(id), knob = pad.firstElementChild, s = sticks[id] = { x: 0, y: 0, id: null };
+  const move = e => {
+    if (e.pointerId !== s.id) return;
+    const b = pad.getBoundingClientRect(), R = b.width / 2;
+    let dx = e.clientX - b.left - R, dy = e.clientY - b.top - R;
+    const l = Math.hypot(dx, dy);
+    if (l > R) { dx *= R / l; dy *= R / l; }
+    s.x = dx / R; s.y = dy / R;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+  const end = e => { if (e.pointerId === s.id) { s.id = null; s.x = s.y = 0; knob.style.transform = ''; } };
+  pad.addEventListener('pointerdown', e => { s.id = e.pointerId; pad.setPointerCapture(e.pointerId); move(e); });
+  pad.addEventListener('pointermove', move);
+  pad.addEventListener('pointerup', end);
+  pad.addEventListener('pointercancel', end);
+}
+addEventListener('contextmenu', e => e.preventDefault());
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const SINK = 4;  // hard mode: m/s the drone sinks with no lift input (full up still climbs at ~4.4 m/s)
+const SPEED = 14, ACCEL = 2, TURN = 2.2, G = 20;  // heavy net: slower top speed and sluggish acceleration
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
+const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
+
+const DRONE_R = 0.9, DRONE_HALF_H = 0.3;  // drone's sideways reach (arms; blade tips may clip) and half its height
+const ENEMY_R = 0.8 + 1, ENEMY_TOP = 0.1 + 1;  // enemy's own reach and half height, plus a 1 m allowance from obstacles
+const tooClose = q => crashes(q, ENEMY_R, ENEMY_TOP);
+function crashes(q, r = DRONE_R, top = DRONE_HALF_H) {  // r: sideways reach, top: clearance needed over roofs  // boxes are pillars or buildings; trees are a 0.6 trunk up to 3.75 m then a cone tapering from r=3 to 0 at 11.25 m
+  // boxes: rounded footprint (distance to the box edge), and only the drone's own thickness above the roof
+  if (boxes.some(o => q.y < o.h + top && Math.hypot(Math.max(0, Math.abs(q.x - o.x) - o.hw), Math.max(0, Math.abs(q.z - o.z) - o.hd)) < r)) return true;
+  return trees.some(o => q.y < 11.25 + r && Math.hypot(q.x - o.x, q.z - o.z) < r + (q.y < 3.75 ? 0.6 : 3 * Math.min(1, (11.25 - q.y) / 7.5)));
+}
+console.assert(boxes.length && trees.length && !crashes(SPAWN), 'spawn point must be clear');
+{ const o = boxes[0]; console.assert(crashes(new THREE.Vector3(o.x + o.hw + 0.8, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x + o.hw + 1, o.h - 1, o.z))
+  && crashes(new THREE.Vector3(o.x, o.h + 0.2, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 0.4, o.z))
+  && !crashes(new THREE.Vector3(o.x + o.hw + 0.7, o.h - 1, o.z + o.hd + 0.7)), 'box hit box: 0.9 m to the side, 0.3 m above, rounded corners'); }
+function end(title, text, kind) {
+  over = true;
+  $('title').textContent = title;
+  $('final').textContent = text;
+  $('over').className = `show ${kind}`;
+}
+
+// crash: the drone tumbles to the ground in flames, then the red game-over panel shows
+const flameGeo = new THREE.IcosahedronGeometry(0.5, 0);
+const flames = Array.from({ length: 120 }, () => {
+  const f = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({ color: 0xffaa22, transparent: true, depthWrite: false }));
+  f.visible = false;
+  f.userData = { life: 0, max: 1, vel: new THREE.Vector3() };
+  scene.add(f);
+  return f;
+});
+let crashT = 0, crashText = '', nextFlame = 0;
+const fire = new THREE.Color(0xffcc22), ember = new THREE.Color(0xdd2200), smoke = new THREE.Color(0x222222);
+function crash(text) {
+  crashT = 2.2; crashText = text;
+  $('msg').textContent = '';
+  vel.multiplyScalar(0.3).y = 3;  // bounce off whatever we hit
+  for (let i = 0; i < 20; i++) spawnFlame(6);  // initial burst
+}
+function spawnFlame(spread) {
+  const f = flames[nextFlame++ % flames.length], u = f.userData;
+  f.visible = true;
+  f.position.copy(player.position).add(tmp.randomDirection().multiplyScalar(0.3));
+  u.vel.randomDirection().multiplyScalar(spread * Math.random()).y = 1.5 + Math.random() * 2;
+  u.smoke = Math.random() < 0.3;  // some puffs are dark smoke that rises higher and lingers
+  if (u.smoke) u.vel.y += 2;
+  u.life = u.max = (u.smoke ? 1.2 : 0.5) + Math.random() * 0.6;
+}
+function updateFlames(dt) {
+  for (const f of flames) {
+    const u = f.userData;
+    if (!f.visible) continue;
+    if ((u.life -= dt) <= 0) { f.visible = false; continue; }
+    const k = u.life / u.max;
+    f.position.addScaledVector(u.vel, dt);
+    u.vel.multiplyScalar(Math.exp(-3 * dt));
+    f.scale.setScalar((u.smoke ? 2.5 - 1.5 * k : 0.5 + 4 * k * (1 - k)) + Math.random() * 0.3);  // flames swell then shrink, smoke grows; flicker  // swell then shrink, with flicker
+    if (u.smoke) f.material.color.copy(smoke); else f.material.color.copy(ember).lerp(fire, k);
+    f.material.opacity = u.smoke ? 0.6 * k : Math.min(1, 2 * k);
+  }
+}
+// towers between the camera and the drone fade out so they never hide it
+const sight = new THREE.Ray(), hitP = new THREE.Vector3();
+function fadeBlockers(dt) {
+  const dist = camera.position.distanceTo(player.position);
+  sight.set(camera.position, hitP.subVectors(player.position, camera.position).normalize());
+  for (const o of boxes) {
+    if (!Array.isArray(o.mesh.material)) continue;  // park pillars are thin; only city towers fade
+    const blocks = sight.intersectBox(o.box, hitP) && camera.position.distanceTo(hitP) < dist;
+    const mats = o.mesh.material, a = THREE.MathUtils.damp(mats[0].opacity, blocks ? 0.2 : 1, 8, dt);
+    for (const m of mats) { m.opacity = a; m.depthWrite = a > 0.95; }
+  }
+}
+function crashStep(dt) {
+  vel.y -= G * dt;
+  const dy = vel.y * dt;
+  player.position.addScaledVector(vel, dt);
+  if (player.position.y < 0.4) { player.position.y = 0.4; vel.set(0, 0, 0); }
+  else { player.rotation.x += 5 * dt; player.rotation.z += 3 * dt; net.position.y = Math.max(0.3, net.position.y + dy); }
+  for (let i = 0; i < 3; i++) spawnFlame(1.5);
+  updateFlames(dt);
+  camera.lookAt(player.position);
+  fadeBlockers(dt);
+  if ((crashT -= dt) <= 0) end('CRASHED', crashText, 'crash');
+}
+
+function step(dt) {
+  if (over) return updateFlames(dt);  // keep the wreck burning behind the panel
+  if (crashT > 0) return crashStep(dt);
+  const M = sticks.rpad, A = sticks.lpad;  // right stick: move / turn; left stick: altitude / strafe
+  const f = clamp(key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown') - M.y, -1, 1);
+  const turn = clamp(key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') - M.x, -1, 1);
+  const strafe = clamp(key('KeyE') - key('KeyQ') + A.x, -1, 1);
+  const lift = clamp(key('Space') - key('ShiftLeft', 'ShiftRight') - A.y, -1, 1);
+
+  heading += turn * TURN * dt;
+  fwd.set(-Math.sin(heading), 0, -Math.cos(heading));
+  right.set(Math.cos(heading), 0, -Math.sin(heading));
+  want.copy(fwd).multiplyScalar(f * SPEED).addScaledVector(right, strafe * SPEED * 0.7);
+  want.y = lift * SPEED * 0.6 - (hard ? SINK : 0);
+  vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
+  player.position.addScaledVector(vel, dt);
+  const hr = Math.hypot(player.position.x, player.position.z);
+  if (hr > ARENA) player.position.multiplyScalar(ARENA / hr);  // scales y too, but it's clamped right after
+  player.position.y = clamp(player.position.y, BAR_Y + H + 0.3, CEIL);
+  // lean into the motion for feel
+  const lf = vel.dot(fwd) / SPEED, ls = vel.dot(right) / SPEED;
+  player.rotation.set(-lf * 0.35, heading, -ls * 0.35, 'YXZ');
+  spin(player, dt);
+  if (crashes(player.position)) return crash(`You hit an obstacle. ${caught} / ${COUNT} caught`);
+
+  // pendulum net: netPos is the curtain's bottom edge; gravity + drag, then pin it H below the bar
+  const piv = player.position.clone();
+  piv.y -= BAR_Y;
+  netVel.y -= G * dt;
+  netVel.multiplyScalar(Math.exp(-2.5 * dt));  // heavy net: swings less and settles faster
+  netPos.addScaledVector(netVel, dt);
+  tmp.subVectors(netPos, piv).setLength(H).add(piv);  // pinned position
+  netVel.addScaledVector(tmp.clone().sub(netPos), 1 / dt);
+  netPos.copy(tmp);
+  if (netPos.y < 0.3) { netPos.y = 0.3; netVel.y = Math.max(0, netVel.y); }
+  net.position.copy(piv);
+  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(piv, netPos).normalize()).multiply(yawQ.setFromAxisAngle(UP, heading));
+  net.updateMatrixWorld();
+
+  // enemies
+  for (const e of enemies) {
+    if (e.caught) continue;
+    const m = e.mesh, d = m.position.distanceTo(net.position);
+    local.copy(m.position);
+    net.worldToLocal(local);
+    if (Math.abs(local.x) < NW && local.y > -H && local.y < 0 && Math.abs(local.z) < 1) {  // flew into the curtain: caught
+      e.caught = true; caught++;
+      scene.remove(m);
+      m.position.copy(curtain((Math.random() - 0.5) * NW * 1.4, -H * (0.4 + Math.random() * 0.5))).z += 0.3;
+      m.rotation.set(Math.random() * 2, 0, Math.random() * 2);
+      bag.add(m);
+      say(caught < COUNT ? `Caught! ${COUNT - caught} to go` : '');
+      continue;
+    }
+    // drones are flat: only a body-on-body hit counts (horizontal 1.0 m, vertical 0.4 m)
+    if (Math.hypot(m.position.x - player.position.x, m.position.z - player.position.z) < 1.0 && Math.abs(m.position.y - player.position.y) < 0.4) return crash(`You rammed a drone. ${caught} / ${COUNT} caught`);
+    const flee = d < 14;
+    if (flee) want.subVectors(m.position, net.position).setLength(5);
+    else {
+      if (m.position.distanceTo(e.target) < 3) e.target = rndPoint();
+      want.subVectors(e.target, m.position).setLength(3);
+    }
+    e.vel.lerp(want, 1 - Math.exp(-(flee ? 1.5 : 1) * dt));
+    tmp.copy(m.position).addScaledVector(e.vel, dt);
+    // keep 1 m from obstacles: stop and pick a new heading (if already too close, only stop short of actually touching)
+    if (tooClose(tmp) && (!tooClose(m.position) || crashes(tmp, 0.8, 0.1))) { e.vel.set(0, 0, 0); e.target = rndPoint(); }
+    else m.position.copy(tmp);
+    const r = Math.hypot(m.position.x, m.position.z);
+    if (r > ARENA - 2) { m.position.x *= (ARENA - 2) / r; m.position.z *= (ARENA - 2) / r; e.target = rndPoint(); }
+    m.position.y = clamp(m.position.y, ENEMY_MIN, CEIL);
+    m.rotation.y = Math.atan2(-e.vel.x, -e.vel.z);
+    spin(m, dt);
+  }
+
+  // 3rd person chase camera, a bit above so the net stays in view
+  tmp.copy(player.position).addScaledVector(fwd, -14).y += 7;
+  camPos.lerp(tmp, 1 - Math.exp(-4 * dt));
+  camera.position.copy(camPos);
+  look.copy(player.position).addScaledVector(fwd, 4).y -= 3.5;
+  camera.lookAt(look);
+  fadeBlockers(dt);
+
+  time += dt;
+  if (caught === COUNT) end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`, 'win');
+  $('score').textContent = `Caught ${caught} / ${COUNT}`;
+  $('time').textContent = `${time.toFixed(1)} s`;
+  if ((msgTimer -= dt) < 0) $('msg').textContent = '';
+}
+function say(t) { $('msg').textContent = t; msgTimer = 2; }
+
+// self-check: the net hangs straight down under a hovering drone
+reset();
+enemies.forEach(e => e.mesh.position.set(0, CEIL, -ARENA + 5));  // out of the way
+for (let i = 0; i < 300; i++) step(1 / 60);
+console.assert(Math.abs(player.position.y - netPos.y - BAR_Y - H) < 0.05, 'net should hang straight down at rest');
+enemies[0].mesh.position.copy(net.position).y -= H / 2;  // middle of the curtain
+step(1 / 60);
+console.assert(caught >= 1 && enemies[0].caught, 'drone in the net mouth should be caught');
+crash('test');
+for (let i = 0; i < 160; i++) step(1 / 60);
+console.assert(over && $('over').className === 'show crash' && player.position.y < 0.5, 'crash should drop the drone and show the red panel');
+// city map self-check: spawn is in a street and enemy spots avoid buildings
+buildMap('city');
+console.assert(boxes.length > 40 && !crashes(SPAWN) && Array.from({ length: 50 }, rndPoint).every(p => !crashes(p, ENEMY_R - 0.01, ENEMY_TOP - 0.01)), 'city map');
+reset();
+for (let i = 0; i < 30; i++) step(1 / 60);
+console.assert(hard && player.position.y < SPAWN.y - 0.3 && !over, 'hard mode: drone sinks with no input');
+reset();
+showMenu();  // paused until a map is picked
+
+
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  step(Math.min(0.05, (now - last) / 1000));
+  last = now;
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
