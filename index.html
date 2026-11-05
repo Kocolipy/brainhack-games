@@ -40,7 +40,7 @@
 <body>
 <div id="hud"><div id="score"></div><div id="time"></div>
   <div id="keys">W/S forward/back &middot; A/D turn &middot; Q/E strafe &middot; Space up &middot; Shift down</div></div>
-<div id="msg">Swing your net into the red drones!</div>
+<div id="msg"></div>
 <div id="touch">
   <div id="lpad" class="pad"><div class="knob"></div></div>
   <div id="rpad" class="pad"><div class="knob"></div></div>
@@ -164,6 +164,7 @@ function reset() {
   heading = 0; vel.set(0, 0, 0);
   netPos.copy(player.position).y -= BAR_Y + H; netVel.set(0, 0, 0);
   caught = 0; time = 0; over = false;
+  say("Fly your net into the red drones!"); msgTimer = 4;  // also clears the self-check's "Caught!" message
   $('over').classList.remove('show');
 }
 reset();
