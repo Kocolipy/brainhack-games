@@ -104,10 +104,10 @@ for (let i = 0; i < 60; i++) {
     scene.add(p);
     pillars.push({ x, z, h });
   } else {
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 3), trunkM);
-    t.position.set(x, 1.5, z);
-    const l = new THREE.Mesh(new THREE.ConeGeometry(2, 5, 8), leafM);
-    l.position.set(x, 5, z);
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, 4.5), trunkM);
+    t.position.set(x, 2.25, z);
+    const l = new THREE.Mesh(new THREE.ConeGeometry(3, 7.5, 8), leafM);
+    l.position.set(x, 7.5, z);
     scene.add(t, l);
     trees.push({ x, z });
   }
@@ -213,9 +213,9 @@ const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.V
 const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
 
 const DRONE_R = 1.1;  // player body + rotor reach
-function crashes(q) {  // pillars are 3x3 boxes; trees are a 0.4 trunk up to 2.5 m then a cone tapering from r=2 to 0 at 7.5 m
+function crashes(q) {  // pillars are 3x3 boxes; trees are a 0.6 trunk up to 3.75 m then a cone tapering from r=3 to 0 at 11.25 m
   if (pillars.some(o => q.y < o.h + DRONE_R && Math.abs(q.x - o.x) < 1.5 + DRONE_R && Math.abs(q.z - o.z) < 1.5 + DRONE_R)) return true;
-  return trees.some(o => q.y < 7.5 + DRONE_R && Math.hypot(q.x - o.x, q.z - o.z) < DRONE_R + (q.y < 2.5 ? 0.4 : 2 * Math.min(1, (7.5 - q.y) / 5)));
+  return trees.some(o => q.y < 11.25 + DRONE_R && Math.hypot(q.x - o.x, q.z - o.z) < DRONE_R + (q.y < 3.75 ? 0.6 : 3 * Math.min(1, (11.25 - q.y) / 7.5)));
 }
 console.assert(pillars.length && trees.length && !crashes(new THREE.Vector3(0, 10, ARENA - 20)), 'spawn point must be clear');
 if (pillars.length) { const o = pillars[0]; console.assert(crashes(new THREE.Vector3(o.x + 2, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 2, o.z)), 'pillar hit box'); }
