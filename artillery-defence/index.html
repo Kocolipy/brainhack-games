@@ -233,6 +233,7 @@ const practice = new URLSearchParams(location.search).has('boss');
 if (practice) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
 // personal best for the landing page (?boss practice runs are not recorded): completed = COMPLETE_SUNK ships sunk in a run,
 // stars = hearts left when the boss went down (3 = flawless, 0 = never beaten), sunk = most ships sunk in one run
+const GOALS = ['Sink the Leviathan', 'Sink the Leviathan with 2 hearts left', 'Sink the Leviathan without losing a heart'];
 const record = (r, sunk = 0) => practice || records.save('artillery-defence', r, o => ({ sunk: Math.max(o.sunk ?? 0, sunk) }));
 // announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
 const bannerEl = document.getElementById('banner');
@@ -350,7 +351,7 @@ function explode(at) {
       record(result, score);
       if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
       else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
-      records.show(bannerEl.querySelector('span'), result);
+      records.show(bannerEl.querySelector('span'), result, GOALS);
       bossEl.style.display = 'none';
     }
   }
@@ -508,7 +509,7 @@ renderer.setAnimationLoop(() => {
   if (hp <= 0 && !overShown) { overShown = true;
     record({}, score);
     showBanner('GAME OVER', `SUNK ${score}`, 'over');
-    records.show(bannerEl.querySelector('span'), { completed: score >= COMPLETE_SUNK });
+    records.show(bannerEl.querySelector('span'), { completed: score >= COMPLETE_SUNK }, GOALS);
   }
   text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}`
     : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`

@@ -114,7 +114,7 @@ function update(dt) {
     $('over').classList.add('show');
     // rating: completed at 30 days, stars at 50 / 75 / 100; personal best for the landing page = most days held
     const held = Math.floor(S.time), result = { completed: held >= 30, stars: records.stars(held, [50, 75, 100]) };
-    records.show($('final'), result);
+    records.show($('final'), result, ['Hold out for 50 days', 'Hold out for 75 days', 'Hold out for 100 days']);
     records.save('defend-zero-days', result,
       o => held > (o.days ?? -1) ? { days: held, patched: S.patched } : {});
   }

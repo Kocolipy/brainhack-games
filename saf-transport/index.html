@@ -282,7 +282,7 @@ function gameOver(reason) {
   speed = 0;
   $('reason').textContent = reason;
   $('final').textContent = `Score ${score} · Deliveries ${delivered}`;
-  records.show($('final'), rating());
+  records.show($('final'), rating(), ['Make 3 deliveries', 'Make 7 deliveries', 'Make 10 deliveries']);
   $('over').classList.add('show');
 }
 $('restart').addEventListener('click', () => location.reload());

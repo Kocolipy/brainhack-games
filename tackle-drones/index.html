@@ -291,7 +291,7 @@ function end(title, text, kind) {
   over = true;
   $('title').textContent = title;
   $('final').textContent = text;
-  records.show($('final'), rating());
+  records.show($('final'), rating(), ['Catch all 3 drones on Easy', 'Catch all 3 drones on Hard', 'Catch all 3 drones on Hard in under 90 s']);
   $('over').className = `show ${kind}`;
 }
 
