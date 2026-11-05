@@ -65,6 +65,7 @@ const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this fa
 // enemy classes (models in assets/, built by tools/make_assets.py); smaller = faster
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
 // final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
+const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
 const TOTAL_SHIPS = 30, BOSS_HP = 12, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
 const BOSS_SPEED = 5, LUNGE_SPEED = 20, LUNGE_TIME = 0.4, LUNGE_EVERY = 3, DODGE_COOLDOWN = 2.25; // units/s, seconds
 
@@ -236,7 +237,7 @@ function spawnEnemy() {
   mesh.scale.setScalar(s);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
-  enemies.push({ mesh, halfW, halfD, height: type.height * s, tx: x, speed: type.speed * (0.8 + Math.random() * 0.4) });
+  enemies.push({ mesh, halfW, halfD, height: type.height * s, tx: x, speed: type.speed * (0.8 + Math.random() * 0.4) * (spawned < WARMUP_SHIPS ? WARMUP_SPEED : 1) });
   return true;
 }
 
