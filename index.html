@@ -185,7 +185,7 @@ const key = (...c) => c.some(k => keys[k]) ? 1 : 0;
 if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
 addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true });
 // any click or tap goes fullscreen (again, if the player left it); not supported on iPhone Safari
-addEventListener('pointerdown', () => {
+addEventListener('pointerup', () => {  // pointerup, not down: browsers only allow fullscreen from a touch once the finger lifts
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
 });
 const sticks = {};
