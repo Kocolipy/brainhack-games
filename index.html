@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Brainhack Games</title>
+<style>
+  body { margin: 0; min-height: 100dvh; background: #0a0f1a; color: #e8eef6; font-family: system-ui, sans-serif;
+         padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); box-sizing: border-box; }
+  h1 { margin: 8px 0 4px; text-align: center; font-size: clamp(28px, 7vw, 48px); color: #fd4; }
+  .sub { text-align: center; color: #8a9bb3; margin: 0 0 24px; }
+  main { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); max-width: 1100px; margin: 0 auto; }
+  a { display: block; background: #141c2c; border-radius: 14px; overflow: hidden; color: inherit; text-decoration: none;
+      border: 2px solid #1f2b40; transition: transform .15s, border-color .15s; }
+  a:hover, a:focus-visible { transform: translateY(-3px); border-color: #fd4; outline: none; }
+  img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #000; }
+  img.tall { object-position: 50% 100%; }  /* portrait games: show the bottom, where the action is */
+  .thumb { position: relative; }
+  /* SAF arm badge (plain text in each arm's colour, not the official insignia) */
+  .arm { position: absolute; left: 10px; top: 10px; padding: 5px 12px; border-radius: 8px; font: 800 15px system-ui, sans-serif;
+         letter-spacing: 1.5px; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .army { background: #4b5d23; } .navy { background: #12306b; } .air { background: #2f7fc8; } .dis { background: #6a2c8e; }
+  .info { padding: 12px 14px 14px; }
+  h2 { margin: 0 0 4px; font-size: 20px; }
+  p { margin: 0; color: #a8b6c9; font-size: 14px; line-height: 1.4; }
+  .tag { display: inline-block; margin-top: 8px; padding: 2px 8px; border-radius: 6px; background: #22304a; color: #9cc4e4; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Brainhack Games</h1>
+<p class="sub">Pick a game. Works on mobile and desktop.</p>
+<main>
+  <a href="saf-transport/">
+    <div class="thumb"><img src="thumbs/saf-transport.jpg" alt="SAF Transport gameplay"><span class="arm army">ARMY</span></div>
+    <div class="info"><h2>SAF Transport</h2><p>Drive an army truck around SAFTI City and make deliveries against the clock.</p><span class="tag">Landscape</span></div>
+  </a>
+  <a href="artillery-defence/">
+    <div class="thumb"><img class="tall" src="thumbs/artillery-defence.jpg" alt="Artillery Defence gameplay"><span class="arm navy">NAVY</span></div>
+    <div class="info"><h2>Artillery Defence</h2><p>Defend the coast from incoming warships with your frigate's gun.</p><span class="tag">Portrait</span></div>
+  </a>
+  <a href="drone-net/">
+    <div class="thumb"><img src="thumbs/drone-net.jpg" alt="Drone Net gameplay"><span class="arm air">AIR FORCE</span></div>
+    <div class="info"><h2>Drone Net</h2><p>Fly a drone with a hanging net and catch the rogue drones.</p><span class="tag">Landscape</span></div>
+  </a>
+  <a href="zero-day/">
+    <div class="thumb"><img class="tall" src="thumbs/zero-day.jpg" alt="Zero Day Defence gameplay"><span class="arm dis">DIS</span></div>
+    <div class="info"><h2>Zero Day Defence</h2><p>Patch your infrastructure before zero-day exploits bring the system down.</p><span class="tag">Portrait</span></div>
+  </a>
+</main>
+</body>
+</html>
