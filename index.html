@@ -75,7 +75,7 @@ const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium',
 // final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
 const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
 const TOTAL_SHIPS = 30, BOSS_HP = 15, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
-const BOSS_SPEED = 5, LUNGE_SPEED = 20, LUNGE_TIME = 0.4, LUNGE_EVERY = 3, DODGE_COOLDOWN = 2.25; // units/s, seconds
+const BOSS_SPEED = 5, LUNGE_SPEED = 30, LUNGE_TIME = 0.4, LUNGE_EVERY = 2.25, DODGE_COOLDOWN = 2.25; // units/s, seconds
 
 // Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
 function arc(from, to, t, out) {
@@ -290,7 +290,7 @@ function explode(at) {
     spawnBlast(e.mesh.position, e.halfD); // secondary explosion on the ship itself
     sinking.push({ ...e, t: 0, roll: (Math.random() < 0.5 ? -1 : 1) * (0.3 + Math.random() * 0.3) });
   }
-  if (boss && blastHits(at, boss.mesh.position, boss.halfW, boss.halfD)) {
+  if (boss && hp > 0 && blastHits(at, boss.mesh.position, boss.halfW, boss.halfD)) { // no win from shells still in the air after a loss
     boss.hp--;
     boss.flash = 0.15;
     bossFill.style.width = boss.hp / BOSS_HP * 100 + '%';
@@ -335,7 +335,7 @@ function startLunge(b, sideways, threatX) {
   if (sideways) b.lunge.set(dodgeDir(b.mesh.position.x, threatX, laneX, reach) * LUNGE_SPEED, 0, BOSS_SPEED * 0.5);
   else b.lunge.set(0, 0, LUNGE_SPEED);
   b.lungeT = LUNGE_TIME;
-  b.nextLunge = LUNGE_EVERY + Math.random() * 3;
+  b.nextLunge = LUNGE_EVERY + Math.random() * 2.25;
   b.cooldown = DODGE_COOLDOWN;
 }
 
