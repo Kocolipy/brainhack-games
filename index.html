@@ -35,8 +35,10 @@
   #rotate { display: none; position: absolute; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
             align-items: center; justify-content: center; text-align: center; z-index: 9; }
   @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
-  #timer { font-size: 1.6em; font-weight: bold; }
+  #timer { position: absolute; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+           color: #fff; font: bold clamp(36px, 10vmin, 72px) sans-serif; text-shadow: 0 0 6px #000; pointer-events: none; }
   #timer.low { color: #f44; }
+  #score { font-weight: bold; }
   #over { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.75); color: #fff;
           flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; }
   #over.show { display: flex; }
@@ -46,7 +48,8 @@
 </style>
 </head>
 <body>
-<div id="hud"><div id="job"></div><div id="timer"></div><div id="info"></div><div id="keys">W/S or ↑/↓ drive &middot; A/D or ←/→ steer &middot; Space brake</div></div>
+<div id="timer"></div>
+<div id="hud"><div id="job"></div><div id="score"></div><div id="info"></div><div id="keys">W/S or ↑/↓ drive &middot; A/D or ←/→ steer &middot; Space brake</div></div>
 <div id="msg"></div>
 <canvas id="map" width="220" height="220"></canvas>
 <div id="touch">
@@ -125,25 +128,38 @@ const SOLDIERS = 40;
 const paths = roads.map(r => {
   const cum = [0];
   for (let i = 1; i < r.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(r.pts[i][0] - r.pts[i - 1][0], r.pts[i][1] - r.pts[i - 1][1]));
-  return { ...r, cum, len: cum[cum.length - 1] };
+  // per-vertex mitred side normals, so an offset (verge) position slides smoothly round bends instead of jumping
+  const n = r.pts.length, closed = r.pts[0][0] === r.pts[n - 1][0] && r.pts[0][1] === r.pts[n - 1][1];
+  const segN = i => { const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1], L = Math.hypot(bx - ax, bz - az); return [-(bz - az) / L, (bx - ax) / L]; };
+  const norms = r.pts.map((_, i) => {
+    const a = segN(i > 0 ? i - 1 : closed ? n - 2 : 0), b = segN(i < n - 1 ? i : closed ? 0 : n - 2);
+    const mx = a[0] + b[0], mz = a[1] + b[1], ml = Math.hypot(mx, mz), k = Math.max(0.5, (mx * b[0] + mz * b[1]) / ml);
+    return [mx / ml / k, mz / ml / k];
+  });
+  return { ...r, cum, norms, len: cum[cum.length - 1] };
 }).filter(p => p.len > 30);  // skips the short motor-pool spur
-function along(p, d) {  // position and direction at distance d along a path
+function along(p, d, off) {  // position `off` metres to the side of the centre line, and heading, at distance d
   let i = 1;
   while (i < p.cum.length - 1 && p.cum[i] < d) i++;
   const [ax, az] = p.pts[i - 1], [bx, bz] = p.pts[i], L = p.cum[i] - p.cum[i - 1], f = (d - p.cum[i - 1]) / L;
-  return { x: ax + (bx - ax) * f, z: az + (bz - az) * f, dx: (bx - ax) / L, dz: (bz - az) / L };
+  const [nax, naz] = p.norms[i - 1], [nbx, nbz] = p.norms[i];
+  return { x: ax + (bx - ax) * f + off * (nax + (nbx - nax) * f), z: az + (bz - az) * f + off * (naz + (nbz - naz) * f),
+           dx: (bx - ax) / L, dz: (bz - az) / L };
 }
+const inBldg = (x, z) => bldgs.some(b => x > b.x0 - 0.4 && x < b.x1 + 0.4 && z > b.z0 - 0.4 && z < b.z1 + 0.4);
+{ const p = paths[0], a = along(p, p.cum[1] - 0.01, 6), b = along(p, p.cum[1] + 0.01, 6);  // no jump at a bend
+  console.assert(Math.hypot(a.x - b.x, a.z - b.z) < 0.1, 'verge position continuous at bends'); }
 const soldiers = [];
 while (soldiers.length < SOLDIERS) {
   const p = paths[Math.floor(Math.random() * paths.length)], d = Math.random() * p.len;
-  const o = (Math.random() < 0.5 ? -1 : 1) * (p.w / 2 + 1.2);  // offset from the centre line: on the verge
-  const at = along(p, d), x = at.x - at.dz * o, z = at.z + at.dx * o;
-  if (Math.hypot(x - truck.position.x, z - truck.position.z) < 40) continue;  // keep the start area clear
+  const o = (Math.random() < 0.5 ? -1 : 1) * (p.w / 2 + 1);  // offset from the centre line: on the verge
+  const { x, z } = along(p, d, o);
+  if (Math.hypot(x - truck.position.x, z - truck.position.z) < 40 || inBldg(x, z)) continue;  // keep the start area clear
   const obj = soldierModel.clone();
   scene.add(obj);
   soldiers.push({ obj, legL: obj.getObjectByName('LegL'), legR: obj.getObjectByName('LegR'), p, d, off: o,
                   dir: Math.random() < 0.5 ? 1 : -1, v: 1.1 + Math.random() * 0.5, phase: Math.random() * 6,
-                  goal: null, crossT: 5 + Math.random() * 50 });
+                  goal: null, crossT: 5 + Math.random() * 50, yaw: 0 });
 }
 function moveSoldiers(dt) {
   for (const s of soldiers) {
@@ -151,17 +167,21 @@ function moveSoldiers(dt) {
     let next = s.d, nextOff = s.off;
     if (s.goal === null) next = Math.max(0, Math.min(s.d + s.dir * s.v * dt, s.p.len));
     else nextOff = s.off + Math.sign(s.goal - s.off) * Math.min(Math.abs(s.goal - s.off), s.v * dt);
-    const ahead = along(s.p, next);
+    const ahead = along(s.p, next, nextOff);
     // wait for a slow or parked truck to pass; a fast one gives no warning
-    const wait = Math.abs(speed) < 3 && hitsTruck(ahead.x - ahead.dz * nextOff, ahead.z + ahead.dx * nextOff, 4);
-    if (!wait) { s.d = next; s.off = nextOff; }
+    const wait = Math.abs(speed) < 3 && hitsTruck(ahead.x, ahead.z, 4);
+    const blocked = inBldg(ahead.x, ahead.z);  // a building on the verge: turn back / stay on this side
+    if (blocked) { if (s.goal === null) s.dir *= -1; else { s.goal = null; s.crossT = 20; } }
+    else if (!wait) { s.d = next; s.off = nextOff; }
     if (s.goal !== null && s.off === s.goal) { s.goal = null; s.crossT = 15 + Math.random() * 45; }
-    if (s.d <= 0 || s.d >= s.p.len) s.dir *= -1;
-    const at = along(s.p, s.d);
-    s.obj.position.set(at.x - at.dz * s.off, 0, at.z + at.dx * s.off);
+    if (s.goal === null && ((s.d <= 0 && s.dir < 0) || (s.d >= s.p.len && s.dir > 0))) s.dir *= -1;  // turn at road ends
+    const at = along(s.p, s.d, s.off);
+    s.obj.position.set(at.x, 0, at.z);
     const [fx, fz] = s.goal === null ? [at.dx * s.dir, at.dz * s.dir] : [-at.dz * Math.sign(s.goal - s.off), at.dx * Math.sign(s.goal - s.off)];
-    s.obj.rotation.y = Math.atan2(-fx, -fz);  // model faces -Z
-    s.phase = wait ? 0 : s.phase + s.v * dt * 5;  // legs together while standing
+    const turn = Math.atan2(-fx, -fz) - s.yaw;  // model faces -Z; ease round instead of snapping
+    s.yaw += Math.atan2(Math.sin(turn), Math.cos(turn)) * Math.min(1, dt * 8);
+    s.obj.rotation.y = s.yaw;
+    s.phase = wait || blocked ? 0 : s.phase + s.v * dt * 5;  // legs together while standing
     s.legL.rotation.x = Math.sin(s.phase) * 0.5;
     s.legR.rotation.x = -Math.sin(s.phase) * 0.5;
   }
@@ -215,12 +235,13 @@ function newJob(from) {
   loaded = !!from;  // chained jobs start loaded at the depot we just reached
 }
 const target = () => loaded ? job.to : job.from;
-// each leg gets time for its straight-line distance (roads wind, so x1.4 at ~8 m/s) plus 15 s; 7% less per delivery
-const legTime = (d, n) => (15 + d * 1.4 / 8) * Math.max(0.45, 0.93 ** n);
+// each leg: 20 s + straight-line distance x1.4 (roads wind) at 6 m/s, then 10% less per delivery.
+// Tuned so a casual driver (~9 m/s average) runs out of time around the 5th-6th delivery; a fast one lasts ~10+.
+const legTime = (d, n) => (20 + d * 1.4 / 6) * Math.max(0.2, 0.9 ** n);
 function startLeg() { const tg = target(); timeLeft = legTime(Math.hypot(tg.x - truck.position.x, tg.z - truck.position.z), delivered); }
 newJob(null);
 startLeg();
-console.assert(legTime(300, 0) > legTime(300, 5) && legTime(300, 100) === legTime(300, 0) * 0.45, 'timer shrinks with deliveries, floored');
+console.assert(legTime(300, 0) > legTime(300, 5) && legTime(300, 100) === legTime(300, 0) * 0.2, 'timer shrinks with deliveries, floored');
 function gameOver(reason) {
   over = true;
   speed = 0;
@@ -298,10 +319,10 @@ renderer.setAnimationLoop(() => {
   if (fwd) speed += (speed < 0 ? 10 : 3.5) * dt;
   if (back) speed -= (speed > 0 ? 10 : 2.5) * dt;
   if (key('Space')) speed -= Math.sign(speed) * Math.min(Math.abs(speed), 14 * dt);
-  speed -= speed * 0.15 * dt;
-  speed = Math.max(-5, Math.min(speed, 16));  // ~58 km/h top speed
+  speed -= speed * 0.1 * dt;
+  speed = Math.max(-5, Math.min(speed, 25));  // 90 km/h top speed
   const steerIn = Math.max(-1, Math.min(1, key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') + touchSteer));
-  steer += (steerIn * 0.6 - steer) * Math.min(1, dt * (steerIn ? 2.5 : 4));
+  steer += (steerIn * 0.6 / (1 + Math.abs(speed) / 15) - steer) * Math.min(1, dt * (steerIn ? 2.5 : 4));
   heading += speed / 4.5 * Math.tan(steer) * dt;  // bicycle model, 4.5 m wheelbase
   truck.position.x -= Math.sin(heading) * speed * dt;
   truck.position.z -= Math.cos(heading) * speed * dt;
@@ -334,7 +355,8 @@ renderer.setAnimationLoop(() => {
     startLeg();
   }
   if ((timeLeft -= dt) <= 0) return gameOver(`Out of time for ${tg.name}`);
-  $('timer').textContent = `TIME ${Math.ceil(timeLeft)}s · SCORE ${score}`;
+  $('timer').textContent = Math.ceil(timeLeft);
+  $('score').textContent = `Score ${score}`;
   $('timer').classList.toggle('low', timeLeft < 10);
   $('job').textContent = loaded ? `DELIVER to ${job.to.name}` : `PICK UP at ${job.from.name}`;
   $('info').textContent = `${Math.round(Math.abs(speed) * 3.6)} km/h${speed < -0.1 ? ' (R)' : ''} · ${Math.round(dist)} m · Deliveries: ${delivered}`;
