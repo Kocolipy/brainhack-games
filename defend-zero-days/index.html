@@ -112,8 +112,8 @@ function update(dt) {
     S.health = 0; S.over = true;
     $('final').textContent = `You held out for ${days(S.time)} and patched ${S.patched} zero-days.`;
     $('over').classList.add('show');
-    // rating: completed at 30 days, stars at 30 / 60 / 100; personal best for the landing page = most days held
-    const held = Math.floor(S.time), result = { completed: held >= 30, stars: records.stars(held, [30, 60, 100]) };
+    // rating: completed at 30 days, stars at 50 / 75 / 100; personal best for the landing page = most days held
+    const held = Math.floor(S.time), result = { completed: held >= 30, stars: records.stars(held, [50, 75, 100]) };
     records.show($('final'), result);
     records.save('defend-zero-days', result,
       o => held > (o.days ?? -1) ? { days: held, patched: S.patched } : {});
