@@ -20,12 +20,24 @@
           text-align: center; letter-spacing: 3px; pointer-events: none; display: none; }
   #bossbar { height: 10px; margin-top: 4px; border: 2px solid #fc8; }
   #bossfill { height: 100%; width: 100%; background: #e60; transition: width 0.15s; }
+  /* full-width announcement band: .danger (boss arrival) or .over (game over) */
+  #banner { position: absolute; top: 38%; left: 0; right: 0; padding: 14px 0; text-align: center; color: #fff;
+            background: rgba(0, 0, 0, 0.65); pointer-events: none; display: none; }
+  #banner b { display: block; font: 900 clamp(32px, 12vw, 56px) sans-serif; letter-spacing: 4px; }
+  #banner span { display: block; margin-top: 4px; font: bold 15px sans-serif; letter-spacing: 3px; }
+  #banner.danger { border-block: 8px solid; border-image: repeating-linear-gradient(-45deg, #fc0 0 14px, #111 14px 28px) 8; }
+  #banner.danger b { color: #f33; animation: blink 0.5s steps(1) infinite; }
+  #banner.over b { color: #f44; }
+  #banner.win { border-block: 4px solid #fc4; }
+  #banner.win b { color: #fd4; }
+  @keyframes blink { 50% { opacity: 0.25; } }
 </style>
 </head>
 <body>
 <div id="game">
   <div id="hud"><div id="hp"></div><div id="text"></div></div>
   <div id="boss">LEVIATHAN<div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="banner"><b></b><span></span></div>
   <div id="power"><div id="bar"></div></div>
 </div>
 <script type="importmap">
@@ -42,11 +54,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const MIN_RANGE = 5, CHARGE_TIME = 2; // seconds from min to max range
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
-const PLAYER_Z = 27, LOSS_GAP = 2; // player hull centre; loss line sits this far in front of the hull
+const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
 // enemy classes (models in assets/, built by tools/make_assets.py); smaller = faster
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
 // final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
-const TOTAL_SHIPS = 50, BOSS_HP = 12, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
+const TOTAL_SHIPS = 10, BOSS_HP = 12, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
 const BOSS_SPEED = 5, LUNGE_SPEED = 20, LUNGE_TIME = 0.4, LUNGE_EVERY = 3, DODGE_COOLDOWN = 2.25; // units/s, seconds
 
 // Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
@@ -133,7 +145,7 @@ scene.add(player);
 player.updateMatrixWorld(true);
 const turret = player.getObjectByName('Turret');
 const muzzle = turret.getWorldPosition(new THREE.Vector3()).setY(0);
-const lossZ = new THREE.Box3().setFromObject(player).min.z - LOSS_GAP; // an enemy bow reaching this costs a heart
+const lossZ = new THREE.Box3().setFromObject(player).min.z - LOSS_GAP; // an enemy whose midpoint passes this costs a heart
 
 // dashed loss line across the whole field (meshes, since WebGL lines are always 1px thin)
 const dashes = new THREE.Group(), dashMat = new THREE.MeshBasicMaterial({ color: 0xff5544, transparent: true, opacity: 0.8 });
@@ -182,6 +194,17 @@ const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, MIN_RANGE +
 const shells = [], enemies = [], blasts = [], sinking = [];
 let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false;
 if (new URLSearchParams(location.search).has('boss')) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
+// announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
+const bannerEl = document.getElementById('banner');
+let bannerTimer, overShown = false;
+function showBanner(title, sub, kind, ms) {
+  clearTimeout(bannerTimer); // a newer banner (e.g. game over) must not be hidden by an older timer
+  bannerEl.className = kind;
+  bannerEl.querySelector('b').textContent = title;
+  bannerEl.querySelector('span').textContent = sub;
+  bannerEl.style.display = 'block';
+  if (ms) bannerTimer = setTimeout(() => bannerEl.style.display = 'none', ms);
+}
 const hpEl = document.getElementById('hp');
 const drawHp = () => hpEl.textContent = '♥'.repeat(hp) + '♡'.repeat(MAX_HP - hp);
 drawHp();
@@ -260,6 +283,7 @@ function explode(at) {
       setBossFlash(boss, false);
       boss = null;
       won = true;
+      showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
       bossEl.style.display = 'none';
     }
   }
@@ -283,6 +307,7 @@ function spawnBoss() {
            lungeT: 0, lunge: new THREE.Vector3(), nextLunge: LUNGE_EVERY, cooldown: 0, flash: 0, age: 0 };
   bossFill.style.width = '100%';
   bossEl.style.display = 'block';
+  showBanner('DANGER!', 'LEVIATHAN APPROACHING', 'danger', 3000);
 }
 
 function startLunge(b, sideways, threatX) {
@@ -315,7 +340,7 @@ function updateBoss(b, dt) {
   const yaw = Math.atan2(bossVel.x, bossVel.z) * 0.4 + Math.sin(b.age * 3) * 0.08;
   b.mesh.rotation.y += (yaw - b.mesh.rotation.y) * Math.min(dt * 8, 1);
   if (b.flash > 0 && (b.flash -= dt) <= 0) setBossFlash(b, false); else if (b.flash > 0) setBossFlash(b, true);
-  if (p.z + b.halfD > lossZ) { hp = 0; drawHp(); } // the boss reaching the line ends the game
+  if (p.z > lossZ) { hp = 0; drawHp(); } // the boss getting halfway past the line ends the game
 }
 
 // --- loop ---
@@ -354,7 +379,7 @@ renderer.setAnimationLoop(() => {
   });
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
-    if (e.mesh.position.z + e.halfD > lossZ) { scene.remove(e.mesh); enemies.splice(i, 1); hp = Math.max(hp - 1, 0); drawHp(); }
+    if (e.mesh.position.z > lossZ) { scene.remove(e.mesh); enemies.splice(i, 1); hp = Math.max(hp - 1, 0); drawHp(); }
   }
 
   for (let i = shells.length - 1; i >= 0; i--) {
@@ -388,6 +413,7 @@ renderer.setAnimationLoop(() => {
     if (w.t === 1) { scene.remove(m); sinking.splice(i, 1); }
   }
 
+  if (hp <= 0 && !overShown) { overShown = true; showBanner('GAME OVER', `SUNK ${score} · REFRESH TO RETRY`, 'over'); }
   text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}. Refresh to retry.`
     : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`
     : boss ? `Sunk: ${score} — the Leviathan approaches!`
