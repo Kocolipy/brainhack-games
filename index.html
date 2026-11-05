@@ -127,14 +127,20 @@ const spin = (d, dt) => d.userData.rotors.forEach((r, i) => r.rotation.y += (i %
 // player drone, and a net hanging on a rope that swings like a pendulum
 const player = makeDrone(0x3366ff, 1.2);
 scene.add(player);
-const ROPE = 4, NET_R = 1.8;
+// rectangular net: a frame NW x ND (half-sizes) with mesh sagging SAG below it
+const ROPE = 4, NW = 2.2, ND = 1.6, SAG = 1.6;
 const net = new THREE.Group();
-const ring = new THREE.Mesh(new THREE.TorusGeometry(NET_R, 0.08, 6, 24), new THREE.MeshLambertMaterial({ color: 0xffaa00 }));
-ring.rotation.x = Math.PI / 2;
-const bag = new THREE.Mesh(new THREE.SphereGeometry(NET_R, 12, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
-  new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.6 }));
-bag.scale.y = 1.2;
-net.add(ring, bag);
+const frameM = new THREE.MeshLambertMaterial({ color: 0xffaa00 });
+for (const [w, d, x, z] of [[NW * 2, 0.12, 0, ND], [NW * 2, 0.12, 0, -ND], [0.12, ND * 2, NW, 0], [0.12, ND * 2, -NW, 0]]) {
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, d), frameM);
+  bar.position.set(x, 0, z);
+  net.add(bar);
+}
+const bagGeo = new THREE.PlaneGeometry(NW * 2, ND * 2, 10, 8).rotateX(-Math.PI / 2);
+const bp = bagGeo.attributes.position;
+for (let i = 0; i < bp.count; i++) bp.setY(i, -SAG * (1 - (bp.getX(i) / NW) ** 2) * (1 - (bp.getZ(i) / ND) ** 2));
+const bag = new THREE.Mesh(bagGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.7 }));
+net.add(bag);
 scene.add(net);
 const ropeGeo = new THREE.BufferGeometry().setFromPoints(Array(8).fill().map(() => new THREE.Vector3()));
 const rope = new THREE.LineSegments(ropeGeo, new THREE.LineBasicMaterial({ color: 0x222222 }));
@@ -200,7 +206,7 @@ addEventListener('contextmenu', e => e.preventDefault());
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const SPEED = 16, ACCEL = 3, TURN = 2.2, G = 20;
 const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
-const UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
+const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
 
 function step(dt) {
   const L = sticks.lpad, R = sticks.rpad;
@@ -233,13 +239,12 @@ function step(dt) {
   netPos.copy(tmp);
   if (netPos.y < 0.3) { netPos.y = 0.3; netVel.y = Math.max(0, netVel.y); }
   net.position.copy(netPos);
-  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(player.position, netPos).normalize());
+  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(player.position, netPos).normalize()).multiply(yawQ.setFromAxisAngle(UP, heading));
   net.updateMatrixWorld();
   const p = ropeGeo.attributes.position;
   for (let i = 0; i < 4; i++) {
-    const a = i * Math.PI / 2;
     p.setXYZ(i * 2, player.position.x, player.position.y - 0.2, player.position.z);
-    const rim = new THREE.Vector3(Math.cos(a) * NET_R, 0, Math.sin(a) * NET_R).applyMatrix4(net.matrixWorld);
+    const rim = new THREE.Vector3(i & 1 ? NW : -NW, 0, i & 2 ? ND : -ND).applyMatrix4(net.matrixWorld);
     p.setXYZ(i * 2 + 1, rim.x, rim.y, rim.z);
   }
   p.needsUpdate = true;
@@ -248,12 +253,14 @@ function step(dt) {
   for (const e of enemies) {
     if (e.caught) continue;
     const m = e.mesh, d = m.position.distanceTo(netPos);
-    if (d < NET_R) {  // inside the net mouth: caught
+    local.copy(m.position);
+    net.worldToLocal(local);
+    if (Math.abs(local.x) < NW && Math.abs(local.z) < ND && local.y > -SAG && local.y < 0.8) {  // inside the frame: caught
       e.caught = true; caught++;
       scene.remove(m);
-      m.position.set((Math.random() - 0.5) * NET_R * 0.8, -NET_R * 0.6, (Math.random() - 0.5) * NET_R * 0.8);
+      m.position.set((Math.random() - 0.5) * NW, -SAG * 0.6, (Math.random() - 0.5) * ND);
       m.rotation.set(Math.random() * 2, 0, Math.random() * 2);
-      bag.add(m);  // bag is scaled 1.2 on y; fine for a dangling trophy
+      bag.add(m);
       say(caught < COUNT ? `Caught! ${COUNT - caught} to go` : '');
       continue;
     }
