@@ -36,7 +36,8 @@
   #menu { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,20,50,0.92); color: #fff;
           flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
   #menu h1 { margin: 0; color: #fd4; font-size: clamp(32px, 10vmin, 64px); }
-  #menu button { margin: 8px; padding: 18px 36px; font: bold 22px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
+  #menu button { margin: 8px; padding: 18px 36px; font: bold 22px sans-serif; border: 0; border-radius: 12px; background: #fd4; vertical-align: top; }
+  #menu small { display: block; max-width: 11em; font: 13px sans-serif; }
   #over h1 { margin: 0; font-size: clamp(28px, 8vmin, 56px); }
   #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; color: #fff; }
   #over.crash { background: rgba(90,0,0,0.6); }
@@ -56,7 +57,7 @@
   <div id="rpad" class="pad"><div class="knob"></div></div>
 </div>
 <div id="over"><h1 id="title"></h1><p id="final"></p><div><button id="again">FLY AGAIN</button> <button id="maps">CHANGE MAP</button></div></div>
-<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a map</p><div><button data-map="park">PARK</button> <button data-map="city">CITY</button></div></div>
+<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a difficulty</p><div><button data-map="park">EASY<small>Park</small></button> <button data-map="city">HARD<small>City &middot; drone sinks unless you hold up</small></button></div></div>
 <div id="rotate">↻<br>Rotate your device to landscape</div>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -103,7 +104,8 @@ const winTex = (() => {  // one window per tile; building UVs are scaled so a ti
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 })();
-const boxes = [], trees = [];  // collision: boxes {x, z, hw, hd, h}; trees {x, z}
+const boxes = [], trees = [];
+let hard = false;  // hard = city map: towers, and the drone sinks unless you hold up  // collision: boxes {x, z, hw, hd, h}; trees {x, z}
 function addBox(x, z, hw, hd, h, mat) {
   const geo = new THREE.BoxGeometry(hw * 2, h, hd * 2), uv = geo.attributes.uv;
   for (let i = 0; i < uv.count; i++) {  // faces 0-1 are x sides (depth wide), 4-5 are z sides (width wide)
@@ -113,13 +115,13 @@ function addBox(x, z, hw, hd, h, mat) {
   const b = new THREE.Mesh(geo, mat);
   b.position.set(x, h / 2, z);
   world.add(b);
-  boxes.push({ x, z, hw, hd, h });
+  boxes.push({ x, z, hw, hd, h, mesh: b, box: new THREE.Box3().setFromObject(b) });
 }
 const nearSpawn = (x, z, hw, hd) => Math.hypot(Math.max(0, Math.abs(SPAWN.x - x) - hw), Math.max(0, Math.abs(SPAWN.z - z) - hd)) < 6;
 function buildMap(kind) {
   world.clear();
   boxes.length = trees.length = 0;
-  const city = kind === 'city';
+  const city = hard = kind === 'city';
   const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 48), new THREE.MeshLambertMaterial({ color: city ? 0x4a4d52 : 0x5f8a3c }));
   ground.rotation.x = -Math.PI / 2;
   const grid = city ? new THREE.GridHelper(28 * 12, 12, 0xdddddd, 0xdddddd)  // lane markings down the middle of each street
@@ -134,8 +136,10 @@ function buildMap(kind) {
       for (const off of split ? [-4.5, 4.5] : [0]) {
         const hw = split ? 3.5 + Math.random() : 6 + Math.random() * 2.5, hd = 6 + Math.random() * 2.5, h = 8 + Math.random() ** 1.5 * 40;
         if (nearSpawn(cx + off, cz, hw, hd)) continue;
-        const mat = new THREE.MeshLambertMaterial({ map: winTex, color: new THREE.Color().setHSL(0.08 + Math.random() * 0.5, 0.15, 0.55 + Math.random() * 0.25) });
-        addBox(cx + off, cz, hw, hd, h, [mat, mat, roofM, roofM, mat, mat]);
+        const mat = new THREE.MeshLambertMaterial({ map: winTex, color: new THREE.Color().setHSL(0.08 + Math.random() * 0.5, 0.15, 0.55 + Math.random() * 0.25), transparent: true });
+        const roof = roofM.clone();  // own materials so each tower can fade on its own
+        roof.transparent = true;
+        addBox(cx + off, cz, hw, hd, h, [mat, mat, roof, roof, mat, mat]);
       }
     }
     return;
@@ -263,6 +267,7 @@ for (const id of ['lpad', 'rpad']) {
 addEventListener('contextmenu', e => e.preventDefault());
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const SINK = 4;  // hard mode: m/s the drone sinks with no lift input (full up still climbs at ~4.4 m/s)
 const SPEED = 14, ACCEL = 2, TURN = 2.2, G = 20;  // heavy net: slower top speed and sluggish acceleration
 const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
 const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
@@ -320,6 +325,18 @@ function updateFlames(dt) {
     f.material.opacity = u.smoke ? 0.6 * k : Math.min(1, 2 * k);
   }
 }
+// towers between the camera and the drone fade out so they never hide it
+const sight = new THREE.Ray(), hitP = new THREE.Vector3();
+function fadeBlockers(dt) {
+  const dist = camera.position.distanceTo(player.position);
+  sight.set(camera.position, hitP.subVectors(player.position, camera.position).normalize());
+  for (const o of boxes) {
+    if (!Array.isArray(o.mesh.material)) continue;  // park pillars are thin; only city towers fade
+    const blocks = sight.intersectBox(o.box, hitP) && camera.position.distanceTo(hitP) < dist;
+    const mats = o.mesh.material, a = THREE.MathUtils.damp(mats[0].opacity, blocks ? 0.2 : 1, 8, dt);
+    for (const m of mats) { m.opacity = a; m.depthWrite = a > 0.95; }
+  }
+}
 function crashStep(dt) {
   vel.y -= G * dt;
   const dy = vel.y * dt;
@@ -329,6 +346,7 @@ function crashStep(dt) {
   for (let i = 0; i < 3; i++) spawnFlame(1.5);
   updateFlames(dt);
   camera.lookAt(player.position);
+  fadeBlockers(dt);
   if ((crashT -= dt) <= 0) end('CRASHED', crashText, 'crash');
 }
 
@@ -345,7 +363,7 @@ function step(dt) {
   fwd.set(-Math.sin(heading), 0, -Math.cos(heading));
   right.set(Math.cos(heading), 0, -Math.sin(heading));
   want.copy(fwd).multiplyScalar(f * SPEED).addScaledVector(right, strafe * SPEED * 0.7);
-  want.y = lift * SPEED * 0.6;
+  want.y = lift * SPEED * 0.6 - (hard ? SINK : 0);
   vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
   player.position.addScaledVector(vel, dt);
   const hr = Math.hypot(player.position.x, player.position.z);
@@ -411,6 +429,7 @@ function step(dt) {
   camera.position.copy(camPos);
   look.copy(player.position).addScaledVector(fwd, 4).y -= 3.5;
   camera.lookAt(look);
+  fadeBlockers(dt);
 
   time += dt;
   if (caught === COUNT) end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`, 'win');
@@ -434,6 +453,9 @@ console.assert(over && $('over').className === 'show crash' && player.position.y
 // city map self-check: spawn is in a street and enemy spots avoid buildings
 buildMap('city');
 console.assert(boxes.length > 40 && !crashes(SPAWN) && Array.from({ length: 50 }, rndPoint).every(p => !crashes(p)), 'city map');
+reset();
+for (let i = 0; i < 30; i++) step(1 / 60);
+console.assert(hard && player.position.y < SPAWN.y - 0.3 && !over, 'hard mode: drone sinks with no input');
 reset();
 showMenu();  // paused until a map is picked
 
