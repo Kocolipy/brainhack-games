@@ -338,8 +338,7 @@ function explode(at) {
     if (!blastHits(at, e.mesh.position, e.halfW, e.halfD)) continue;
     enemies.splice(i, 1);
     hit = true;
-    score++;
-    if (score === COMPLETE_SUNK || score === STAR_SUNK) record(rating()); // saved as it happens
+    addSunk();
     spawnBlast(e.mesh.position, e.halfD); // secondary explosion on the ship itself
     sinking.push({ ...e, t: 0, roll: (Math.random() < 0.5 ? -1 : 1) * (0.3 + Math.random() * 0.3) });
   }
@@ -467,7 +466,7 @@ renderer.setAnimationLoop(() => {
   });
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
-    if (e.mesh.position.z > lossZ) { scene.remove(e.mesh); enemies.splice(i, 1); hp = Math.max(hp - 1, 0); drawHp(); }
+    if (e.mesh.position.z > lossZ) { scene.remove(e.mesh); enemies.splice(i, 1); hp = Math.max(hp - 1, 0); drawHp(); addSunk(); }
   }
 
   for (let i = shells.length - 1; i >= 0; i--) {
