@@ -37,7 +37,7 @@
   <div id="start">
     <h1>ZERO DAY<br>DEFENCE</h1>
     <p>Zero-day exploits are racing down toward your infrastructure.</p>
-    <p>Tap an infrastructure block to deploy a fix. A deploy takes <b>3 s</b> and only one can run at a time.</p>
+    <p>Tap an infrastructure block to deploy a fix. Each fix stops <b>one</b> exploit, takes <b>3 s</b>, and only one can run at a time. Blocks with nothing incoming can't be patched.</p>
     <p>Unpatched exploits drain system health:<br>
       <span class="sev" style="color:#ffd23f">LOW</span> &middot; <span class="sev" style="color:#ff8c1a">HIGH</span> &middot; <span class="sev" style="color:#ff2e4d">CRITICAL</span></p>
     <button id="go">START</button>
@@ -50,16 +50,19 @@ const $ = id => document.getElementById(id);
 const cv = $('c'), ctx = cv.getContext('2d');
 
 const LANES = [
-  { name: 'NETWORK', icon: '🌐' },
-  { name: 'COMPUTE', icon: '🖥️' },
-  { name: 'DATABASE', icon: '🗄️' },
-  { name: 'CODE', icon: '💻' },
+  { name: 'NETWORK', icon: 'network' },
+  { name: 'COMPUTE', icon: 'compute' },
+  { name: 'DATABASE', icon: 'database' },
+  { name: 'CODE', icon: 'code' },
 ];
 const SEV = [  // health drain in % per second while unpatched; travel speed in lane-lengths per second
-  { name: 'LOW', color: '#ffd23f', drain: 0.6, speed: 0.13, weight: 6 },
-  { name: 'HIGH', color: '#ff8c1a', drain: 1.5, speed: 0.17, weight: 3 },
-  { name: 'CRITICAL', color: '#ff2e4d', drain: 3, speed: 0.22, weight: 1 },
+  { name: 'LOW', color: '#ffd23f', drain: 0.6, speed: 0.13, weight: 6, icon: '0day_low' },
+  { name: 'HIGH', color: '#ff8c1a', drain: 1.5, speed: 0.17, weight: 3, icon: '0day_high' },
+  { name: 'CRITICAL', color: '#ff2e4d', drain: 3, speed: 0.22, weight: 1, icon: '0day_critical' },
 ];
+// icons rendered in Blender (tools/make_icons.py); drawn once loaded
+const IMG = {};
+for (const n of [...LANES, ...SEV].map(o => o.icon)) { IMG[n] = new Image(); IMG[n].src = `assets/${n}.png`; }
 const DEPLOY_TIME = 3;
 
 let S;  // game state
@@ -73,9 +76,10 @@ function pickSev() {
   return SEV.findIndex(s => (r -= s.weight) < 0);
 }
 
-// deploy a fix on a lane; refused while another deploy is running
+const threatened = lane => S.hits[lane].length > 0 || S.exploits.some(e => e.lane === lane);
+// deploy a fix on a lane; refused while another deploy is running, or if nothing threatens that lane
 function deploy(lane) {
-  if (S.over || S.deploy) return false;
+  if (S.over || S.deploy || !threatened(lane)) return false;
   S.deploy = { lane, left: DEPLOY_TIME };
   return true;
 }
@@ -95,8 +99,14 @@ function update(dt) {
   }
   S.exploits = S.exploits.filter(e => e.y < 1);
   if (S.deploy && (S.deploy.left -= dt) <= 0) {
-    S.patched += S.hits[S.deploy.lane].length;
-    S.hits[S.deploy.lane] = [];  // fix patches every exploit that has hit this infra so far
+    // one fix stops one exploit: the worst breach on this infra, else the incoming exploit closest to it
+    const lane = S.deploy.lane, h = S.hits[lane];
+    if (h.length) h.splice(h.indexOf(Math.max(...h)), 1);
+    else {
+      const near = S.exploits.filter(e => e.lane === lane).sort((a, b) => b.y - a.y)[0];
+      if (near) S.exploits.splice(S.exploits.indexOf(near), 1);
+    }
+    S.patched++;
     S.deploy = null;
   }
   for (const h of S.hits) for (const sev of h) S.health -= SEV[sev].drain * dt;
@@ -110,15 +120,20 @@ function update(dt) {
 // self-check: hits drain health, deploys block each other and patch after 3 s
 S = newState();
 S.spawnIn = 1e9;
-S.exploits.push({ lane: 2, sev: 2, y: 0.999 });
+console.assert(!deploy(2), 'no fix for an infra with nothing incoming');
+S.exploits.push({ lane: 2, sev: 2, y: 0.999 }, { lane: 2, sev: 0, y: 0.999 }, { lane: 0, sev: 0, y: 0.1 }, { lane: 0, sev: 1, y: 0.2 });
 update(0.1);
-console.assert(S.hits[2].length === 1, 'exploit should hit the database');
+console.assert(S.hits[2].length === 2, 'both exploits should hit the database');
 console.assert(deploy(2) && !deploy(0), 'only one deploy at a time');
 for (let i = 0; i < 29; i++) update(0.1);
-console.assert(S.deploy && S.hits[2].length === 1, 'still deploying before 3 s');
+console.assert(S.deploy && S.hits[2].length === 2, 'still deploying before 3 s');
 update(0.11);
-console.assert(!S.deploy && S.hits[2].length === 0 && Math.abs(S.health - (100 - 3 * 3)) < 0.5, 'patched after 3 s; critical drained ~3%/s');
-console.assert(deploy(0), 'next deploy allowed once done');
+console.assert(!S.deploy && S.hits[2].length === 1 && S.hits[2][0] === 0, 'one fix patches only the worst breach');
+console.assert(Math.abs(S.health - (100 - 3 * 3 - 0.6 * 3.1)) < 0.5, 'critical drained ~3%/s, low ~0.6%/s');
+S.exploits = S.exploits.filter(e => e.lane === 0); S.hits[2] = [];
+console.assert(deploy(0), 'fix allowed for an infra with exploits in flight');
+for (let i = 0; i < 31; i++) update(0.1);
+console.assert(S.exploits.length === 1 && S.exploits[0].sev === 0, 'fix with no breach stops the nearest incoming exploit');
 
 // layout, in CSS pixels of the play column
 let W, H, dpr;
@@ -152,12 +167,11 @@ function draw() {
   const r = Math.min(lw * 0.28, 22);
   for (const e of S.exploits) {
     const x = laneX(e.lane), y = TOP() + e.y * (LANE_END() - TOP()), c = SEV[e.sev].color;
-    ctx.shadowColor = c; ctx.shadowBlur = 16;
-    ctx.fillStyle = c;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowColor = c; ctx.shadowBlur = 18;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(t * 1.5 + e.lane);  // slow spin
+    ctx.drawImage(IMG[SEV[e.sev].icon], -r * 1.3, -r * 1.3, r * 2.6, r * 2.6);
+    ctx.restore();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#000'; ctx.font = `bold ${r * 0.62}px ui-monospace, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('0day', x, y);
   }
 
   // infrastructure blocks
@@ -165,20 +179,20 @@ function draw() {
   for (let i = 0; i < LANES.length; i++) {
     const x = lw * i + 5, w = lw - 10, hits = S.hits[i], dep = S.deploy?.lane === i;
     const worst = hits.length ? SEV[Math.max(...hits)].color : null;
-    const blocked = S.deploy && !dep;
+    const incoming = S.exploits.some(e => e.lane === i), blocked = S.deploy ? !dep : !hits.length && !incoming;
     ctx.fillStyle = worst ? `rgba(255,40,60,${0.18 + 0.12 * Math.sin(t * 8)})` : '#0c1a2a';
     rrect(x, iy, w, ih, 10); ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = worst || (dep ? '#2ee6a6' : '#1f3b57'); ctx.stroke();
     ctx.globalAlpha = blocked ? 0.4 : 1;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `${Math.min(w * 0.38, ih * 0.32)}px sans-serif`;
-    ctx.fillText(LANES[i].icon, x + w / 2, iy + ih * 0.33);
+    const sz = Math.min(w * 0.8, ih * 0.58);
+    ctx.drawImage(IMG[LANES[i].icon], x + (w - sz) / 2, iy + ih * 0.3 - sz / 2, sz, sz);
     ctx.fillStyle = '#cfe'; ctx.font = `bold ${Math.min(w * 0.13, 14)}px ui-monospace, monospace`;
     ctx.fillText(LANES[i].name, x + w / 2, iy + ih * 0.62);
     if (hits.length) {
       ctx.fillStyle = worst; ctx.fillText(`⚠ ${hits.length} BREACH${hits.length > 1 ? 'ES' : ''}`, x + w / 2, iy + ih * 0.82);
     } else if (!dep) {
-      ctx.fillStyle = '#4a7'; ctx.fillText('SECURE', x + w / 2, iy + ih * 0.82);
+      ctx.fillStyle = incoming ? '#ffd23f' : '#4a7'; ctx.fillText(incoming ? 'INCOMING' : 'SECURE', x + w / 2, iy + ih * 0.82);
     }
     if (dep) {  // deploy progress bar
       const p = 1 - S.deploy.left / DEPLOY_TIME;
