@@ -1,4 +1,4 @@
-"""Render the block and zero-day icons for Zero Day Defence.
+"""Render the block and zero-day icons for Threat Window.
 
 Run headless from the game folder:
   blender.exe -b --python tools/make_icons.py -- assets
