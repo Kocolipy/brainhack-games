@@ -235,13 +235,18 @@ function newJob(from) {
   loaded = !!from;  // chained jobs start loaded at the depot we just reached
 }
 const target = () => loaded ? job.to : job.from;
-// each leg: 20 s + straight-line distance x1.4 (roads wind) at 6 m/s, then 10% less per delivery.
-// Tuned so a casual driver (~9 m/s average) runs out of time around the 5th-6th delivery; a fast one lasts ~10+.
-const legTime = (d, n) => (20 + d * 1.4 / 6) * Math.max(0.2, 0.9 ** n);
-function startLeg() { const tg = target(); timeLeft = legTime(Math.hypot(tg.x - truck.position.x, tg.z - truck.position.z), delivered); }
+// each leg: 10 s + straight-line distance x1.4 (roads wind) at 6 m/s, then 10% less per delivery;
+// legs to or from the Secure Compound get a flat +5 s (gate and walls slow you down).
+const legTime = (d, n, secure) => (10 + d * 1.4 / 6) * Math.max(0.2, 0.9 ** n) + (secure ? 5 : 0);
+function startLeg() {
+  const tg = target(), from = loaded ? job.from : motorPool;  // only the very first leg is a pickup from the motor pool
+  const secure = [tg, from].some(d => d.name === 'Secure Compound');
+  timeLeft = legTime(Math.hypot(tg.x - truck.position.x, tg.z - truck.position.z), delivered, secure);
+}
 newJob(null);
 startLeg();
-console.assert(legTime(300, 0) > legTime(300, 5) && legTime(300, 100) === legTime(300, 0) * 0.2, 'timer shrinks with deliveries, floored');
+console.assert(legTime(300, 0) > legTime(300, 5) && legTime(300, 100) === legTime(300, 0) * 0.2 &&
+               legTime(300, 3, true) === legTime(300, 3) + 5 && depots.some(d => d.name === 'Secure Compound'), 'leg timer rules');
 function gameOver(reason) {
   over = true;
   speed = 0;
