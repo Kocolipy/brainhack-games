@@ -44,6 +44,20 @@
   #over.show { display: flex; }
   #over h1 { margin: 0; color: #f44; font-size: clamp(28px, 8vmin, 56px); }
   #over p { margin: 0; font-size: clamp(16px, 4vmin, 24px); }
+  /* start screen: objective + controls; the game is frozen until START */
+  #intro { position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.85); color: #fff; overflow-y: auto;
+           display: flex; flex-direction: column; align-items: center; justify-content: safe center; text-align: center;
+           padding: max(12px, env(safe-area-inset-top)) 6vw 12px; box-sizing: border-box; font-size: clamp(13px, 2.4vmin + 4px, 18px); }
+  #intro.hide { display: none; }
+  #intro h1 { margin: 0 0 4px; color: #fd4; font-size: clamp(24px, 7vmin, 44px); letter-spacing: 2px; }
+  #intro ul { margin: 6px 0; padding-left: 1.2em; max-width: 720px; text-align: left; line-height: 1.35; }
+  #intro li { margin: 3px 0; }
+  #intro .stop { color: #fd4; font-weight: bold; }
+  #intro .controls { margin: 4px 0; color: #bbb; font-size: 0.9em; }
+  #intro .tc { display: none; }
+  body.touch #intro .tc { display: inline; }
+  body.touch #intro .kb { display: none; }
+  #start { margin-top: 10px; padding: 12px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
   #restart { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
 </style>
 </head>
@@ -56,6 +70,18 @@
   <div id="steerpad"><div id="knob"></div></div>
   <div id="brake" class="pedal">BRAKE<br>/ REV</div>
   <div id="gas" class="pedal">GAS</div>
+</div>
+<div id="intro">
+  <h1>SAF TRANSPORT</h1>
+  <div>Drive the 5-tonner around SAFTI City: pick up cargo at one depot and deliver it to the next, before the clock runs out.</div>
+  <ul>
+    <li>Your job is shown top-left. Head for the <b>beacon</b>; the flashing depot on the map is your target.</li>
+    <li class="stop">STOP at every location: drive onto the depot's pad and come to a complete stop to load or deliver. Driving through doesn't count.</li>
+    <li>Every leg has a timer. Arrive faster for more points, and expect less time after each delivery.</li>
+    <li>Game over if the timer runs out, you hit a soldier, or you crash into a building at speed.</li>
+  </ul>
+  <div class="controls"><span class="tc">Drag the left pad to steer · hold GAS to drive · hold BRAKE to stop, keep holding to reverse</span><span class="kb">W/S or ↑/↓ drive · A/D or ←/→ steer · Space brake · Enter to start</span></div>
+  <button id="start">START DRIVING</button>
 </div>
 <div id="over"><h1>GAME OVER</h1><p id="reason"></p><p id="final"></p><button id="restart">DRIVE AGAIN</button></div>
 <div id="rotate">↻<br>Rotate your phone to landscape</div>
@@ -227,7 +253,7 @@ for (const id of ['gas', 'brake']) {
 addEventListener('contextmenu', e => e.preventDefault());  // long-press on pedals
 
 // jobs: pick up at one depot, deliver to another
-let job, loaded = false, delivered = 0, msgTimer = 0, score = 0, timeLeft = 0, over = false;
+let job, loaded = false, delivered = 0, msgTimer = 0, score = 0, timeLeft = 0, over = false, started = false;
 const say = t => { $('msg').textContent = t; msgTimer = 3; };
 function newJob(from) {
   const others = depots.filter(d => d !== motorPool);  // first pickup is never where we start
@@ -257,6 +283,9 @@ function gameOver(reason) {
   $('over').classList.add('show');
 }
 $('restart').addEventListener('click', () => location.reload());
+const start = () => { started = true; $('intro').classList.add('hide'); };
+$('start').addEventListener('click', start);
+addEventListener('keydown', e => { if (!started && e.code === 'Enter') start(); });
 addEventListener('keydown', e => { if (over && e.code === 'Enter') location.reload(); });
 const onPad = (d, p) => p.x > d.r.x0 && p.x < d.r.x1 && p.z > d.r.z0 && p.z < d.r.z1;
 
@@ -320,7 +349,7 @@ function drawMap(t) {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
-  if (over) { renderer.render(scene, camera); return; }
+  if (over || !started) { renderer.render(scene, camera); return; }  // frozen behind the start screen / game over
   // drive: throttle / brake-then-reverse, rolling drag
   const fwd = key('KeyW', 'ArrowUp') || pedal.gas, back = key('KeyS', 'ArrowDown') || pedal.brake;
   if (fwd) speed += (speed < 0 ? 10 : 3.5) * dt;
