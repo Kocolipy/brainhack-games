@@ -41,6 +41,10 @@
   #game.bossfight #hud { display: none; }
   #game.bossfight #boss { top: 14px; }
   @keyframes blink { 50% { opacity: 0.25; } }
+  /* phones/tablets held sideways: black out and pause (desktop windows are landscape too, so they're exempt) */
+  #rotate { position: fixed; inset: 0; z-index: 10; background: #000; color: #666; display: none;
+            align-items: center; justify-content: center; font: bold 16px sans-serif; letter-spacing: 2px; }
+  @media (orientation: landscape) and (pointer: coarse) { #rotate { display: flex; } }
 </style>
 </head>
 <body>
@@ -50,6 +54,7 @@
   <div id="banner"><b></b><span></span><button id="restart">RESTART</button></div>
   <div id="power"><div id="bar"></div></div>
 </div>
+<div id="rotate">ROTATE TO PORTRAIT</div>
 <script type="importmap">
 { "imports": {
   "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -190,7 +195,7 @@ function aim(e) {
   if (p) aimDir.subVectors(p, muzzle).setY(0).normalize();
 }
 addEventListener('pointermove', aim);
-addEventListener('pointerdown', e => { aim(e); if (hp > 0) { charging = true; charge = 0; } });
+addEventListener('pointerdown', e => { if (paused.matches) return; aim(e); if (hp > 0) { charging = true; charge = 0; } });
 addEventListener('pointerup', () => {
   if (!charging) return;
   charging = false;
@@ -360,7 +365,9 @@ function updateBoss(b, dt) {
 
 // --- loop ---
 const clock = new THREE.Clock(), bar = document.getElementById('bar'), ahead = new THREE.Vector3();
+const paused = matchMedia('(orientation: landscape) and (pointer: coarse)'); // same rule as the #rotate CSS
 renderer.setAnimationLoop(() => {
+  if (paused.matches) { clock.getDelta(); charging = false; return; } // frozen; discard the elapsed time so nothing jumps on resume
   const dt = Math.min(clock.getDelta(), 0.05);
   turret.rotation.y = Math.atan2(-aimDir.x, -aimDir.z) - player.rotation.y; // turret angle is relative to the hull
 
