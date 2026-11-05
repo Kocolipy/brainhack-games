@@ -412,7 +412,8 @@ function step(dt) {
     // drones are flat: only a body-on-body hit counts (horizontal 1.0 m, vertical 0.4 m)
     if (Math.hypot(m.position.x - player.position.x, m.position.z - player.position.z) < 1.0 && Math.abs(m.position.y - player.position.y) < 0.4) return crash(`You rammed a drone. ${caught} / ${COUNT} caught`);
     const flee = d < 14;
-    if (flee) want.subVectors(m.position, net.position).setLength(5);
+    if (flee && !hard) want.subVectors(net.position, m.position).setLength(1);  // easy: a close drone drifts slowly into the net
+    else if (flee) want.subVectors(m.position, net.position).setLength(5);
     else {
       if (m.position.distanceTo(e.target) < 3) e.target = rndPoint();
       want.subVectors(e.target, m.position).setLength(3);
