@@ -23,8 +23,8 @@
   #lpad { left: max(3vw, env(safe-area-inset-left)); }
   #rpad { right: max(3vw, env(safe-area-inset-right)); }
   .pad::after { position: absolute; top: -20px; width: 100%; text-align: center; color: rgba(255,255,255,0.7); font-size: 13px; }
-  #lpad::after { content: 'move / turn'; }
-  #rpad::after { content: 'up-down / strafe'; }
+  #lpad::after { content: 'up-down / strafe'; }
+  #rpad::after { content: 'move / turn'; }
   .knob { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px; border-radius: 50%;
           background: rgba(255,255,255,0.35); border: 2px solid #fff; pointer-events: none; }
   #rotate { display: none; position: absolute; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
@@ -281,11 +281,11 @@ function crashStep(dt) {
 function step(dt) {
   if (over) return updateFlames(dt);  // keep the wreck burning behind the panel
   if (crashT > 0) return crashStep(dt);
-  const L = sticks.lpad, R = sticks.rpad;
-  const f = clamp(key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown') - L.y, -1, 1);
-  const turn = clamp(key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') - L.x, -1, 1);
-  const strafe = clamp(key('KeyE') - key('KeyQ') + R.x, -1, 1);
-  const lift = clamp(key('Space') - key('ShiftLeft', 'ShiftRight') - R.y, -1, 1);
+  const M = sticks.rpad, A = sticks.lpad;  // right stick: move / turn; left stick: altitude / strafe
+  const f = clamp(key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown') - M.y, -1, 1);
+  const turn = clamp(key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') - M.x, -1, 1);
+  const strafe = clamp(key('KeyE') - key('KeyQ') + A.x, -1, 1);
+  const lift = clamp(key('Space') - key('ShiftLeft', 'ShiftRight') - A.y, -1, 1);
 
   heading += turn * TURN * dt;
   fwd.set(-Math.sin(heading), 0, -Math.cos(heading));
