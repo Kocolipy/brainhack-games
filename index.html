@@ -146,23 +146,26 @@ while (soldiers.length < SOLDIERS) {
 }
 function moveSoldiers(dt) {
   for (const s of soldiers) {
-    s.d += s.dir * s.v * dt;
-    if (s.d < 0 || s.d > s.p.len) { s.dir *= -1; s.d = Math.max(0, Math.min(s.d, s.p.len)); }
+    const next = Math.max(0, Math.min(s.d + s.dir * s.v * dt, s.p.len)), ahead = along(s.p, next);
+    // wait for a slow or parked truck to pass; a fast one gives no warning
+    const wait = Math.abs(speed) < 3 && hitsTruck(ahead.x - ahead.dz * s.off, ahead.z + ahead.dx * s.off, 4);
+    if (!wait) s.d = next;
+    if (s.d <= 0 || s.d >= s.p.len) s.dir *= -1;
     const at = along(s.p, s.d);
     s.obj.position.set(at.x - at.dz * s.off, 0, at.z + at.dx * s.off);
     s.obj.rotation.y = Math.atan2(-at.dx * s.dir, -at.dz * s.dir);  // model faces -Z
-    s.phase += s.v * dt * 5;
+    s.phase = wait ? 0 : s.phase + s.v * dt * 5;  // legs together while standing
     s.legL.rotation.x = Math.sin(s.phase) * 0.5;
     s.legR.rotation.x = -Math.sin(s.phase) * 0.5;
   }
 }
 // truck-local coordinates: x right, z backward (cab front ~5 m ahead of the rear-axle pivot)
-const hitsTruck = (x, z) => {
+const hitsTruck = (x, z, m = 0) => {  // m: extra margin around the truck
   const dx = x - truck.position.x, dz = z - truck.position.z, c = Math.cos(heading), s = Math.sin(heading);
   const lx = dx * c - dz * s, lz = dx * s + dz * c;
-  return Math.abs(lx) < 1.6 && lz > -5 && lz < 3;
+  return Math.abs(lx) < 1.6 + m && lz > -5 - m && lz < 3 + m;
 };
-console.assert(hitsTruck(truck.position.x - Math.sin(heading) * 4, truck.position.z - Math.cos(heading) * 4) && !hitsTruck(truck.position.x + 5, truck.position.z), 'truck hit box');
+console.assert(hitsTruck(truck.position.x - Math.sin(heading) * 4, truck.position.z - Math.cos(heading) * 4) && !hitsTruck(truck.position.x + 5, truck.position.z) && hitsTruck(truck.position.x + 5, truck.position.z, 4), 'truck hit box');
 
 // input: keyboard, plus touch drag-pad and pedals
 const keys = {}, pedal = { gas: false, brake: false };
@@ -242,7 +245,8 @@ function collide(p, rad) {
 }
 // self-checks: a point inside a building gets pushed out; the truck starts clear of buildings
 { const b = bldgs[0], p = { x: b.x0 + 0.1, z: (b.z0 + b.z1) / 2 }; console.assert(collide(p, 2) && p.x <= b.x0 - 1.99, 'collision push-out'); }
-console.assert(!collide({ x: motorPool.x, z: motorPool.z - 2.5 }, 3), 'start position blocked');
+const TRUCK_CIRCLES = [-4, -2.4, -0.8, 0.8, 2.4];  // local z (backward +); radius 1.4, gaps leave <0.2 m of the 2.6 m-wide sides uncovered
+console.assert(TRUCK_CIRCLES.every(lz => !collide({ x: motorPool.x, z: motorPool.z + lz }, 1.4)), 'start position blocked');
 
 const map = $('map').getContext('2d');
 const MAP_SCALE = 0.8;  // px per metre -> ~135 m radius visible
@@ -295,11 +299,13 @@ renderer.setAnimationLoop(() => {
   truck.position.x -= Math.sin(heading) * speed * dt;
   truck.position.z -= Math.cos(heading) * speed * dt;
   truck.rotation.y = heading;
-  // shortcut: truck is one 3 m circle at the cab, fine for a demo; use an OBB if corners clipping matters
-  const front = { x: truck.position.x - Math.sin(heading) * 2.5, z: truck.position.z - Math.cos(heading) * 2.5 };
-  const before = { ...front };
-  if (collide(front, 3)) {
-    truck.position.x += front.x - before.x; truck.position.z += front.z - before.z;
+  // truck body = 5 overlapping 1.4 m circles from the cab front (-5.4) to the tailgate (+3.8); push the whole truck out
+  let crashed = false;
+  for (const lz of TRUCK_CIRCLES) {
+    const p = { x: truck.position.x + Math.sin(heading) * lz, z: truck.position.z + Math.cos(heading) * lz }, before = { ...p };
+    if (collide(p, 1.4)) { crashed = true; truck.position.x += p.x - before.x; truck.position.z += p.z - before.z; }
+  }
+  if (crashed) {
     if (Math.abs(speed) > 2) return gameOver(`You crashed into a building at ${Math.round(Math.abs(speed) * 3.6)} km/h`);
     speed *= -0.2;  // a slow nudge while manoeuvring is allowed
   }
