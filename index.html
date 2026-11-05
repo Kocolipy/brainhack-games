@@ -200,10 +200,12 @@ addEventListener('keydown', e => keys[e.code] = true);
 addEventListener('keyup', e => keys[e.code] = false);
 const key = (...c) => c.some(k => keys[k]);
 if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
-addEventListener('touchstart', () => {
-  document.body.classList.add('touch');
-  document.documentElement.requestFullscreen?.().catch(() => {});  // hide browser bars where allowed (not iOS Safari)
-}, { once: true });
+addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true });
+// Hide browser bars where allowed (not iOS Safari). Must be on touchend: browsers ignore fullscreen requests
+// from touchstart. Not once, so it comes back after the player swipes out of fullscreen.
+addEventListener('touchend', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+});
 const pad = $('steerpad'), knob = $('knob');
 let steerId = null, steerX0 = 0;
 pad.addEventListener('pointerdown', e => { steerId = e.pointerId; steerX0 = e.clientX; pad.setPointerCapture(e.pointerId); });
