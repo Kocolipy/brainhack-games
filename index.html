@@ -37,7 +37,7 @@
   <div id="start">
     <h1>ZERO DAY<br>DEFENCE</h1>
     <p>Zero-day exploits are racing down toward your infrastructure.</p>
-    <p>Tap an infrastructure block to deploy a fix. Each fix stops <b>one</b> exploit, takes <b>3 s</b>, and only one can run at a time. Blocks with nothing incoming can't be patched.</p>
+    <p>Tap an infrastructure block to deploy a fix. A fix patches every exploit on that block and in its lane when you start it (not ones that appear later), takes <b>3 s</b>, and only one can run at a time. Blocks with nothing incoming can't be patched.</p>
     <p>Unpatched exploits drain system health:<br>
       <span class="sev" style="color:#ffd23f">LOW</span> &middot; <span class="sev" style="color:#ff8c1a">HIGH</span> &middot; <span class="sev" style="color:#ff2e4d">CRITICAL</span></p>
     <button id="go">START</button>
@@ -68,7 +68,7 @@ const DEPLOY_TIME = 3;
 let S;  // game state
 function newState() {
   return { health: 100, time: 0, spawnIn: 1.5, exploits: [], deploy: null, over: false, patched: 0,
-           hits: LANES.map(() => []) };  // hits[lane] = severities currently draining health
+           hits: LANES.map(() => []) };  // hits[lane] = exploits that reached that infra and are draining health
 }
 
 function pickSev() {
@@ -80,7 +80,8 @@ const threatened = lane => S.hits[lane].length > 0 || S.exploits.some(e => e.lan
 // deploy a fix on a lane; refused while another deploy is running, or if nothing threatens that lane
 function deploy(lane) {
   if (S.over || S.deploy || !threatened(lane)) return false;
-  S.deploy = { lane, left: DEPLOY_TIME };
+  // the fix covers every exploit on this lane right now, breached or in flight; later arrivals are not covered
+  S.deploy = { lane, left: DEPLOY_TIME, covers: new Set([...S.hits[lane], ...S.exploits.filter(e => e.lane === lane)]) };
   return true;
 }
 
@@ -95,21 +96,17 @@ function update(dt) {
   }
   for (const e of S.exploits) {
     e.y += SEV[e.sev].speed * (1 + ramp * 0.6) * dt;
-    if (e.y >= 1) S.hits[e.lane].push(e.sev);
+    if (e.y >= 1) S.hits[e.lane].push(e);
   }
   S.exploits = S.exploits.filter(e => e.y < 1);
   if (S.deploy && (S.deploy.left -= dt) <= 0) {
-    // one fix stops one exploit: the worst breach on this infra, else the incoming exploit closest to it
-    const lane = S.deploy.lane, h = S.hits[lane];
-    if (h.length) h.splice(h.indexOf(Math.max(...h)), 1);
-    else {
-      const near = S.exploits.filter(e => e.lane === lane).sort((a, b) => b.y - a.y)[0];
-      if (near) S.exploits.splice(S.exploits.indexOf(near), 1);
-    }
-    S.patched++;
+    const { lane, covers } = S.deploy;
+    S.hits[lane] = S.hits[lane].filter(e => !covers.has(e));
+    S.exploits = S.exploits.filter(e => !covers.has(e));
+    S.patched += covers.size;
     S.deploy = null;
   }
-  for (const h of S.hits) for (const sev of h) S.health -= SEV[sev].drain * dt;
+  for (const h of S.hits) for (const e of h) S.health -= SEV[e.sev].drain * dt;
   if (S.health <= 0) {
     S.health = 0; S.over = true;
     $('final').textContent = `You held out for ${S.time.toFixed(1)} s and patched ${S.patched} zero-days.`;
@@ -117,23 +114,23 @@ function update(dt) {
   }
 }
 
-// self-check: hits drain health, deploys block each other and patch after 3 s
+// self-check: hits drain health, deploys block each other, a fix covers only what existed when it started
 S = newState();
 S.spawnIn = 1e9;
 console.assert(!deploy(2), 'no fix for an infra with nothing incoming');
-S.exploits.push({ lane: 2, sev: 2, y: 0.999 }, { lane: 2, sev: 0, y: 0.999 }, { lane: 0, sev: 0, y: 0.1 }, { lane: 0, sev: 1, y: 0.2 });
+const crit = { lane: 2, sev: 2, y: 0.999 }, low = { lane: 2, sev: 0, y: 0.5 };
+S.exploits.push(crit, low, { lane: 0, sev: 0, y: 0.1 });
 update(0.1);
-console.assert(S.hits[2].length === 2, 'both exploits should hit the database');
+console.assert(S.hits[2].length === 1, 'critical should hit the database');
 console.assert(deploy(2) && !deploy(0), 'only one deploy at a time');
+const late = { lane: 2, sev: 1, y: 0.9 };
+S.exploits.push(late);  // arrives after the fix started: must not be covered
 for (let i = 0; i < 29; i++) update(0.1);
-console.assert(S.deploy && S.hits[2].length === 2, 'still deploying before 3 s');
+console.assert(S.deploy && S.hits[2].length === 2, 'still deploying before 3 s (critical + late have hit)');
 update(0.11);
-console.assert(!S.deploy && S.hits[2].length === 1 && S.hits[2][0] === 0, 'one fix patches only the worst breach');
-console.assert(Math.abs(S.health - (100 - 3 * 3 - 0.6 * 3.1)) < 0.5, 'critical drained ~3%/s, low ~0.6%/s');
-S.exploits = S.exploits.filter(e => e.lane === 0); S.hits[2] = [];
-console.assert(deploy(0), 'fix allowed for an infra with exploits in flight');
-for (let i = 0; i < 31; i++) update(0.1);
-console.assert(S.exploits.length === 1 && S.exploits[0].sev === 0, 'fix with no breach stops the nearest incoming exploit');
+console.assert(!S.deploy && S.hits[2].length === 1 && S.hits[2][0] === late, 'fix patches the breach and the in-flight low, not the late one');
+console.assert(!S.exploits.includes(low) && S.patched === 2, 'in-flight exploit removed by the fix');
+console.assert(Math.abs(S.health - (100 - 3 * 3 - 1.5 * 2.3)) < 0.6, 'critical drained ~3%/s, high ~1.5%/s');
 
 // layout, in CSS pixels of the play column
 let W, H, dpr;
@@ -178,7 +175,7 @@ function draw() {
   const ih = INFRA_H(), iy = H - ih - 8;
   for (let i = 0; i < LANES.length; i++) {
     const x = lw * i + 5, w = lw - 10, hits = S.hits[i], dep = S.deploy?.lane === i;
-    const worst = hits.length ? SEV[Math.max(...hits)].color : null;
+    const worst = hits.length ? SEV[Math.max(...hits.map(e => e.sev))].color : null;
     const incoming = S.exploits.some(e => e.lane === i), blocked = S.deploy ? !dep : !hits.length && !incoming;
     ctx.fillStyle = worst ? `rgba(255,40,60,${0.18 + 0.12 * Math.sin(t * 8)})` : '#0c1a2a';
     rrect(x, iy, w, ih, 10); ctx.fill();
