@@ -1,7 +1,7 @@
 """Build low-poly assets for SAF Transport (5-tonner driving demo in SAFTI City).
 
 Run headless:  blender.exe -b --python tools/make_assets.py -- assets
-Writes cab.glb (driver's-eye cab interior, steering wheel tagged kind=wheel) and city.glb
+Writes cab.glb (driver's-eye cab interior, steering wheel tagged kind=wheel), soldier.glb (Body + LegL/LegR) and city.glb
 (SAFTI City; glTF extras -> three.js userData: kind=bldg|roof|deco|beacon, depot=<name>, roads=<json> on "Roads"),
 plus preview_cab.png / preview_city.png / preview_map.png.
 
@@ -433,10 +433,31 @@ depot_names = [o["depot"] for o in city if "depot" in o]
 assert len(depot_names) == len(set(depot_names)) >= 10, depot_names
 print("named buildings:", n_bldg, "colliders:", len(footprints), "depots:", depot_names)
 
+# ---------- soldier (origin at feet, faces +Y; legs pivot at the hip so the game can swing them) ----------
+camo, camo_dk, skin, boot = mat("Camo", (0.24, 0.3, 0.17)), mat("CamoDark", (0.15, 0.19, 0.11)), mat("Skin", (0.62, 0.45, 0.33)), mat("Boot", (0.04, 0.04, 0.04))
+torso = join("Body", [
+    box("Torso", -0.2, -0.12, 0.9, 0.2, 0.12, 1.45, camo),
+    box("Vest", -0.22, -0.14, 1.05, 0.22, 0.14, 1.4, camo_dk),
+    box("ArmL", -0.3, -0.06, 0.95, -0.2, 0.08, 1.42, camo),
+    box("ArmR", 0.2, -0.06, 0.95, 0.3, 0.2, 1.42, camo),
+    box("Head", -0.1, -0.1, 1.47, 0.1, 0.1, 1.67, skin),
+    box("Helmet", -0.14, -0.14, 1.6, 0.14, 0.14, 1.76, camo_dk),
+    box("Rifle", -0.03, 0.12, 1.05, 0.03, 0.85, 1.15, boot),  # held across the chest, muzzle forward
+])
+legs = []
+for s, name in ((-1, "LegL"), (1, "LegR")):
+    leg = join(name, [box("Leg", -0.08, -0.08, -0.82, 0.08, 0.08, 0, camo), box("Boot", -0.09, -0.09, -0.9, 0.09, 0.14, -0.78, boot)])
+    leg.location = (s * 0.1, 0, 0.9)
+    legs.append(leg)
+assert max(v.co.z for v in torso.data.vertices) < 1.8 and min(v.co.y for v in torso.data.vertices) < -0.1
+
 os.makedirs(out, exist_ok=True)
 p = lambda f: os.path.join(out, f)
 export(p("cab.glb"), [cab, wheel])
 export(p("city.glb"), city)
+export(p("soldier.glb"), [torso, *legs])
+for o in (torso, *legs):  # keep it out of the city previews (it stands at the origin)
+    o.hide_render = True
 
 # ---------- previews (workbench) ----------
 cam = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
@@ -460,5 +481,15 @@ cam.data.type, cam.data.ortho_scale = "ORTHO", 470
 cam.location, cam.rotation_euler = (0, -15, 300), (0, 0, 0)
 scene.render.resolution_x = scene.render.resolution_y = 1024
 scene.render.filepath = "//preview_map.png"
+bpy.ops.render.render(write_still=True)
+cam.data.type = "PERSP"  # soldier close-up, standing in front of Poyan Interchange
+for o in (torso, *legs):
+    o.hide_render = False
+    o.location.x += 70
+    o.location.y -= 50
+legs[0].rotation_euler.x, legs[1].rotation_euler.x = 0.4, -0.4
+cam.location, cam.rotation_euler = (72.5, -53.5, 1.6), (math.radians(88), 0, math.radians(35))
+scene.render.resolution_x, scene.render.resolution_y = 800, 600
+scene.render.filepath = "//preview_soldier.png"
 bpy.ops.render.render(write_still=True)
 print("ASSETS OK")
