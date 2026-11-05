@@ -124,28 +124,20 @@ function makeDrone(color, size) {
 }
 const spin = (d, dt) => d.userData.rotors.forEach((r, i) => r.rotation.y += (i % 2 ? 40 : -40) * dt);
 
-// player drone, and a net hanging on a rope that swings like a pendulum
+// player drone, with a net curtain hanging from a bar under its belly; the curtain swings like a pendulum
 const player = makeDrone(0x3366ff, 1.2);
 scene.add(player);
-// rectangular net: a frame NW x ND (half-sizes) with mesh sagging SAG below it
-const ROPE = 4, NW = 2.2, ND = 1.6, SAG = 1.6;
+// net: one top bar (half-length NW) under the drone, curtain H tall billowing back by BILLOW
+const NW = 1.4, H = 4.5, BILLOW = 0.5, BAR_Y = 0.35;
 const net = new THREE.Group();
-const frameM = new THREE.MeshLambertMaterial({ color: 0xffaa00 });
-for (const [w, d, x, z] of [[NW * 2, 0.12, 0, ND], [NW * 2, 0.12, 0, -ND], [0.12, ND * 2, NW, 0], [0.12, ND * 2, -NW, 0]]) {
-  const bar = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, d), frameM);
-  bar.position.set(x, 0, z);
-  net.add(bar);
-}
-const bagGeo = new THREE.PlaneGeometry(NW * 2, ND * 2, 10, 8).rotateX(-Math.PI / 2);
-const bp = bagGeo.attributes.position;
-for (let i = 0; i < bp.count; i++) bp.setY(i, -SAG * (1 - (bp.getX(i) / NW) ** 2) * (1 - (bp.getZ(i) / ND) ** 2));
-const bag = new THREE.Mesh(bagGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.7 }));
+net.add(new THREE.Mesh(new THREE.BoxGeometry(NW * 2, 0.1, 0.1), new THREE.MeshLambertMaterial({ color: 0x222222 })));
+const curtain = (x, y) => new THREE.Vector3(x, y, BILLOW * (1 - (x / NW) ** 2) * -y / H);
+const pts = [], CX = 12, CY = 36;  // square mesh cells like a real capture net
+for (let i = 0; i <= CX; i++) for (let j = 0; j < CY; j++) pts.push(curtain(-NW + 2 * NW * i / CX, -H * j / CY), curtain(-NW + 2 * NW * i / CX, -H * (j + 1) / CY));
+for (let j = 0; j <= CY; j++) for (let i = 0; i < CX; i++) pts.push(curtain(-NW + 2 * NW * i / CX, -H * j / CY), curtain(-NW + 2 * NW * (i + 1) / CX, -H * j / CY));
+const bag = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x111111 }));
 net.add(bag);
 scene.add(net);
-const ropeGeo = new THREE.BufferGeometry().setFromPoints(Array(8).fill().map(() => new THREE.Vector3()));
-const rope = new THREE.LineSegments(ropeGeo, new THREE.LineBasicMaterial({ color: 0x222222 }));
-rope.frustumCulled = false;
-scene.add(rope);
 
 const vel = new THREE.Vector3(), netPos = new THREE.Vector3(), netVel = new THREE.Vector3();
 let heading = 0;
@@ -166,7 +158,7 @@ function reset() {
   });
   player.position.set(0, 10, ARENA - 20);
   heading = 0; vel.set(0, 0, 0);
-  netPos.copy(player.position).y -= ROPE; netVel.set(0, 0, 0);
+  netPos.copy(player.position).y -= BAR_Y + H; netVel.set(0, 0, 0);
   caught = 0; time = 0; over = false;
   $('over').classList.remove('show');
 }
@@ -224,48 +216,43 @@ function step(dt) {
   player.position.addScaledVector(vel, dt);
   const hr = Math.hypot(player.position.x, player.position.z);
   if (hr > ARENA) player.position.multiplyScalar(ARENA / hr);  // scales y too, but it's clamped right after
-  player.position.y = clamp(player.position.y, ROPE + 0.5, CEIL);
+  player.position.y = clamp(player.position.y, BAR_Y + H + 0.3, CEIL);
   // lean into the motion for feel
   const lf = vel.dot(fwd) / SPEED, ls = vel.dot(right) / SPEED;
   player.rotation.set(-lf * 0.35, heading, -ls * 0.35, 'YXZ');
   spin(player, dt);
 
-  // pendulum net: gravity + drag, then pin to rope length
+  // pendulum net: netPos is the curtain's bottom edge; gravity + drag, then pin it H below the bar
+  const piv = player.position.clone();
+  piv.y -= BAR_Y;
   netVel.y -= G * dt;
   netVel.multiplyScalar(Math.exp(-1.2 * dt));
   netPos.addScaledVector(netVel, dt);
-  tmp.subVectors(netPos, player.position).setLength(ROPE).add(player.position);  // pinned position
+  tmp.subVectors(netPos, piv).setLength(H).add(piv);  // pinned position
   netVel.addScaledVector(tmp.clone().sub(netPos), 1 / dt);
   netPos.copy(tmp);
   if (netPos.y < 0.3) { netPos.y = 0.3; netVel.y = Math.max(0, netVel.y); }
-  net.position.copy(netPos);
-  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(player.position, netPos).normalize()).multiply(yawQ.setFromAxisAngle(UP, heading));
+  net.position.copy(piv);
+  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(piv, netPos).normalize()).multiply(yawQ.setFromAxisAngle(UP, heading));
   net.updateMatrixWorld();
-  const p = ropeGeo.attributes.position;
-  for (let i = 0; i < 4; i++) {
-    p.setXYZ(i * 2, player.position.x, player.position.y - 0.2, player.position.z);
-    const rim = new THREE.Vector3(i & 1 ? NW : -NW, 0, i & 2 ? ND : -ND).applyMatrix4(net.matrixWorld);
-    p.setXYZ(i * 2 + 1, rim.x, rim.y, rim.z);
-  }
-  p.needsUpdate = true;
 
   // enemies
   for (const e of enemies) {
     if (e.caught) continue;
-    const m = e.mesh, d = m.position.distanceTo(netPos);
+    const m = e.mesh, d = m.position.distanceTo(net.position);
     local.copy(m.position);
     net.worldToLocal(local);
-    if (Math.abs(local.x) < NW && Math.abs(local.z) < ND && local.y > -SAG && local.y < 0.8) {  // inside the frame: caught
+    if (Math.abs(local.x) < NW && local.y > -H && local.y < 0 && Math.abs(local.z) < 1) {  // flew into the curtain: caught
       e.caught = true; caught++;
       scene.remove(m);
-      m.position.set((Math.random() - 0.5) * NW, -SAG * 0.6, (Math.random() - 0.5) * ND);
+      m.position.copy(curtain((Math.random() - 0.5) * NW * 1.4, -H * (0.4 + Math.random() * 0.5))).z += 0.3;
       m.rotation.set(Math.random() * 2, 0, Math.random() * 2);
       bag.add(m);
       say(caught < COUNT ? `Caught! ${COUNT - caught} to go` : '');
       continue;
     }
     const flee = d < 14;
-    if (flee) want.subVectors(m.position, netPos).setLength(9);
+    if (flee) want.subVectors(m.position, net.position).setLength(9);
     else {
       if (m.position.distanceTo(e.target) < 3) e.target = rndPoint();
       want.subVectors(e.target, m.position).setLength(5);
@@ -298,10 +285,10 @@ function step(dt) {
 }
 function say(t) { $('msg').textContent = t; msgTimer = 2; }
 
-// self-check: the net settles one rope length under a hovering drone
+// self-check: the net hangs straight down under a hovering drone
 for (let i = 0; i < 300; i++) step(1 / 60);
-console.assert(Math.abs(player.position.y - netPos.y - ROPE) < 0.05, 'net should hang straight down at rest');
-enemies[0].mesh.position.copy(netPos);
+console.assert(Math.abs(player.position.y - netPos.y - BAR_Y - H) < 0.05, 'net should hang straight down at rest');
+enemies[0].mesh.position.copy(net.position).y -= H / 2;  // middle of the curtain
 step(1 / 60);
 console.assert(caught >= 1 && enemies[0].caught, 'drone in the net mouth should be caught');
 reset();
