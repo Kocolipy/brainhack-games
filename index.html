@@ -67,6 +67,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // --- tuning ---
 const MIN_RANGE = 5, CHARGE_TIME = 2; // seconds from min to max range
+const RELOAD_TIME = 0.2; // seconds after a shot before the next one can be charged
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
@@ -74,7 +75,7 @@ const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this fa
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
 // final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
 const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
-const TOTAL_SHIPS = 30, BOSS_HP = 15, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
+const TOTAL_SHIPS = 30, BOSS_HP = 8, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
 const BOSS_SPEED = 5, LUNGE_SPEED = 30, LUNGE_TIME = 0.4, LUNGE_EVERY = 2.25, DODGE_COOLDOWN = 2.25; // units/s, seconds
 
 // Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
@@ -195,7 +196,8 @@ function aim(e) {
   if (p) aimDir.subVectors(p, muzzle).setY(0).normalize();
 }
 addEventListener('pointermove', aim);
-addEventListener('pointerdown', e => { if (paused.matches) return; aim(e); if (hp > 0) { charging = true; charge = 0; } });
+let reload = 0;
+addEventListener('pointerdown', e => { if (paused.matches) return; aim(e); if (hp > 0 && reload <= 0) { charging = true; charge = 0; } });
 addEventListener('pointerup', () => {
   if (!charging) return;
   charging = false;
@@ -228,6 +230,7 @@ const drawHp = () => hpEl.textContent = '♥'.repeat(hp) + '♡'.repeat(MAX_HP -
 drawHp();
 
 function fire(target) {
+  reload = RELOAD_TIME;
   const mesh = shellModel.clone();
   mesh.scale.setScalar(1.5); // real 76mm rounds would be invisible at this scale
   scene.add(mesh);
@@ -373,6 +376,7 @@ renderer.setAnimationLoop(() => {
   document.body.classList.toggle('sideways', paused.matches);
   if (paused.matches) { clock.getDelta(); charging = false; return; } // frozen; discard the elapsed time so nothing jumps on resume
   const dt = Math.min(clock.getDelta(), 0.05);
+  reload -= dt;
   turret.rotation.y = Math.atan2(-aimDir.x, -aimDir.z) - player.rotation.y; // turret angle is relative to the hull
 
   if (charging) {
