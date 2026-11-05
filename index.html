@@ -54,8 +54,8 @@ const LANES = [
 ];
 const SEV = [  // health drain in % per second while unpatched; travel speed in lane-lengths per second
   { name: 'LOW', color: '#ffd23f', drain: 0.6, speed: 0.13, weight: 6, icon: '0day_low' },
-  { name: 'HIGH', color: '#ff8c1a', drain: 1.5, speed: 0.17, weight: 3, icon: '0day_high' },
-  { name: 'CRITICAL', color: '#ff2e4d', drain: 3, speed: 0.22, weight: 1, icon: '0day_critical' },
+  { name: 'HIGH', color: '#ff8c1a', drain: 2.25, speed: 0.17, weight: 3, icon: '0day_high' },
+  { name: 'CRITICAL', color: '#ff2e4d', drain: 6, speed: 0.22, weight: 1, icon: '0day_critical' },
 ];
 // icons rendered in Blender (tools/make_icons.py); drawn once loaded
 const IMG = {};
@@ -127,7 +127,7 @@ console.assert(S.deploy && S.hits[2].length === 2, 'still deploying before 3 s (
 update(0.11);
 console.assert(!S.deploy && S.hits[2].length === 1 && S.hits[2][0] === late, 'fix patches the breach and the in-flight low, not the late one');
 console.assert(!S.exploits.includes(low) && S.patched === 2, 'in-flight exploit removed by the fix');
-console.assert(Math.abs(S.health - (100 - 3 * 3 - 1.5 * 2.3)) < 0.6, 'critical drained ~3%/s, high ~1.5%/s');
+console.assert(Math.abs(S.health - (100 - 6 * 3 - 2.25 * 2.3)) < 0.8, 'critical drained ~6%/s, high ~2.25%/s');
 
 // layout, in CSS pixels of the play column
 let W, H, dpr;
