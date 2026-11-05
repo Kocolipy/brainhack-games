@@ -435,14 +435,24 @@ print("named buildings:", n_bldg, "colliders:", len(footprints), "depots:", depo
 
 # ---------- soldier (origin at feet, faces +Y; legs pivot at the hip so the game can swing them) ----------
 camo, camo_dk, skin, boot = mat("Camo", (0.24, 0.3, 0.17)), mat("CamoDark", (0.15, 0.19, 0.11)), mat("Skin", (0.62, 0.45, 0.33)), mat("Boot", (0.04, 0.04, 0.04))
+# safe hang: rifle slung across the front on its sling, muzzle down and slightly forward, hands off the trigger
+rifle = join("Rifle", [box("Gun", -0.03, -0.04, -0.75, 0.03, 0.04, 0, boot),           # body, butt at the origin
+                       box("Mag", -0.025, 0.04, -0.42, 0.025, 0.12, -0.3, boot)])      # magazine on the front face
+rifle.location, rifle.rotation_euler = (0.06, 0.2, 1.38), (0.3, 0.25, 0)
+sling = box("Sling", -0.02, -0.01, -0.3, 0.02, 0.01, 0.3, camo_dk)  # strap from the left shoulder down to the right hip
+sling.location, sling.rotation_euler = (0, 0.15, 1.17), (0, -0.7, 0)
+bpy.context.view_layer.update()
+rv = [rifle.matrix_world @ v.co for v in rifle.data.vertices]
+muzzle = min(rv, key=lambda v: v.z)
+assert 0.5 < muzzle.z < 0.75 and muzzle.y > 0.2, f"rifle should hang muzzle-down in front: {tuple(muzzle)}"
 torso = join("Body", [
     box("Torso", -0.2, -0.12, 0.9, 0.2, 0.12, 1.45, camo),
     box("Vest", -0.22, -0.14, 1.05, 0.22, 0.14, 1.4, camo_dk),
     box("ArmL", -0.3, -0.06, 0.95, -0.2, 0.08, 1.42, camo),
-    box("ArmR", 0.2, -0.06, 0.95, 0.3, 0.2, 1.42, camo),
+    box("ArmR", 0.2, -0.06, 0.95, 0.3, 0.08, 1.42, camo),
     box("Head", -0.1, -0.1, 1.47, 0.1, 0.1, 1.67, skin),
     box("Helmet", -0.14, -0.14, 1.6, 0.14, 0.14, 1.76, camo_dk),
-    box("Rifle", -0.03, 0.12, 1.05, 0.03, 0.85, 1.15, boot),  # held across the chest, muzzle forward
+    rifle, sling,
 ])
 legs = []
 for s, name in ((-1, "LegL"), (1, "LegR")):
@@ -487,8 +497,8 @@ for o in (torso, *legs):
     o.hide_render = False
     o.location.x += 70
     o.location.y -= 50
-legs[0].rotation_euler.x, legs[1].rotation_euler.x = 0.4, -0.4
-cam.location, cam.rotation_euler = (72.5, -53.5, 1.6), (math.radians(88), 0, math.radians(35))
+legs[0].rotation_euler.x, legs[1].rotation_euler.x = 0.3, -0.3
+cam.location, cam.rotation_euler = (71.6, -47.7, 1.3), (math.radians(90), 0, math.radians(144))
 scene.render.resolution_x, scene.render.resolution_y = 800, 600
 scene.render.filepath = "//preview_soldier.png"
 bpy.ops.render.render(write_still=True)
