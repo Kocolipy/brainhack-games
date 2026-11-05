@@ -32,7 +32,11 @@
   @media (orientation: portrait) { #rotate { display: flex; } }
   #over { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.7); color: #fff;
           flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
-  #over.show { display: flex; }
+  #over.show, #menu.show { display: flex; }
+  #menu { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,20,50,0.92); color: #fff;
+          flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  #menu h1 { margin: 0; color: #fd4; font-size: clamp(32px, 10vmin, 64px); }
+  #menu button { margin: 8px; padding: 18px 36px; font: bold 22px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
   #over h1 { margin: 0; font-size: clamp(28px, 8vmin, 56px); }
   #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; color: #fff; }
   #over.crash { background: rgba(90,0,0,0.6); }
@@ -51,7 +55,8 @@
   <div id="lpad" class="pad"><div class="knob"></div></div>
   <div id="rpad" class="pad"><div class="knob"></div></div>
 </div>
-<div id="over"><h1 id="title"></h1><p id="final"></p><button id="again">FLY AGAIN</button></div>
+<div id="over"><h1 id="title"></h1><p id="final"></p><div><button id="again">FLY AGAIN</button> <button id="maps">CHANGE MAP</button></div></div>
+<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a map</p><div><button data-map="park">PARK</button> <button data-map="city">CITY</button></div></div>
 <div id="rotate">↻<br>Rotate your device to landscape</div>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -79,39 +84,78 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
-// world: grass field with scattered pillars and trees; flying the drone into one is game over
-const ARENA = 67.5, CEIL = 25;
-const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 48), new THREE.MeshLambertMaterial({ color: 0x5f8a3c }));
-ground.rotation.x = -Math.PI / 2;
-scene.add(ground);
-const grid = new THREE.GridHelper(ARENA * 2, 36, 0x3d5c26, 0x4d7330);
-grid.position.y = 0.02;
-scene.add(grid);
+// two maps: a park (trees + pillars) and a city (street grid of tower blocks); flying into anything is game over
+const ARENA = 67.5, CEIL = 25, SPAWN = new THREE.Vector3(0, 10, ARENA - 20);
 const edge = new THREE.Mesh(new THREE.TorusGeometry(ARENA, 0.3, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffdd44 }));
 edge.rotation.x = Math.PI / 2;
 scene.add(edge);
+const world = new THREE.Group();
+scene.add(world);
 const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), leafM = new THREE.MeshLambertMaterial({ color: 0x2f6b2a });
-const pillarM = new THREE.MeshLambertMaterial({ color: 0xb8b0a0 });
-const pillars = [], trees = [];
-for (let i = 0; i < 60; i++) {
-  const a = Math.random() * Math.PI * 2, r = 15 + Math.random() * (ARENA + 40);
-  const x = Math.cos(a) * r, z = Math.sin(a) * r;
-  if (Math.hypot(x, z - (ARENA - 20)) < 12) continue;  // keep the spawn point clear
-  if (i % 4 === 0) {
-    const h = 6 + Math.random() * 18;
-    const p = new THREE.Mesh(new THREE.BoxGeometry(3, h, 3), pillarM);
-    p.position.set(x, h / 2, z);
-    scene.add(p);
-    pillars.push({ x, z, h });
-  } else {
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, 4.5), trunkM);
-    t.position.set(x, 2.25, z);
-    const l = new THREE.Mesh(new THREE.ConeGeometry(3, 7.5, 8), leafM);
-    l.position.set(x, 7.5, z);
-    scene.add(t, l);
-    trees.push({ x, z });
+const pillarM = new THREE.MeshLambertMaterial({ color: 0xb8b0a0 }), roofM = new THREE.MeshLambertMaterial({ color: 0x55585c });
+const winTex = (() => {  // one window per tile; building UVs are scaled so a tile is ~3 m
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 32, 32);
+  g.fillStyle = '#7d93a8'; g.fillRect(6, 8, 20, 16);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+})();
+const boxes = [], trees = [];  // collision: boxes {x, z, hw, hd, h}; trees {x, z}
+function addBox(x, z, hw, hd, h, mat) {
+  const geo = new THREE.BoxGeometry(hw * 2, h, hd * 2), uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {  // faces 0-1 are x sides (depth wide), 4-5 are z sides (width wide)
+    const face = Math.floor(i / 4);
+    uv.setXY(i, uv.getX(i) * (face < 2 ? hd * 2 : hw * 2) / 3, uv.getY(i) * h / 3);
+  }
+  const b = new THREE.Mesh(geo, mat);
+  b.position.set(x, h / 2, z);
+  world.add(b);
+  boxes.push({ x, z, hw, hd, h });
+}
+const nearSpawn = (x, z, hw, hd) => Math.hypot(Math.max(0, Math.abs(SPAWN.x - x) - hw), Math.max(0, Math.abs(SPAWN.z - z) - hd)) < 6;
+function buildMap(kind) {
+  world.clear();
+  boxes.length = trees.length = 0;
+  const city = kind === 'city';
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 48), new THREE.MeshLambertMaterial({ color: city ? 0x4a4d52 : 0x5f8a3c }));
+  ground.rotation.x = -Math.PI / 2;
+  const grid = city ? new THREE.GridHelper(28 * 12, 12, 0xdddddd, 0xdddddd)  // lane markings down the middle of each street
+                    : new THREE.GridHelper(ARENA * 2, 36, 0x3d5c26, 0x4d7330);
+  grid.position.y = 0.02;
+  world.add(ground, grid);
+  if (city) {
+    // blocks every 28 m with streets along x = 0, ±28 ... and z = 0, ±28 ...; one or two towers per block
+    for (let bx = -4; bx < 4; bx++) for (let bz = -4; bz < 4; bz++) {
+      const cx = bx * 28 + 14, cz = bz * 28 + 14;
+      const split = Math.random() < 0.5;
+      for (const off of split ? [-4.5, 4.5] : [0]) {
+        const hw = split ? 3.5 + Math.random() : 6 + Math.random() * 2.5, hd = 6 + Math.random() * 2.5, h = 8 + Math.random() ** 1.5 * 40;
+        if (nearSpawn(cx + off, cz, hw, hd)) continue;
+        const mat = new THREE.MeshLambertMaterial({ map: winTex, color: new THREE.Color().setHSL(0.08 + Math.random() * 0.5, 0.15, 0.55 + Math.random() * 0.25) });
+        addBox(cx + off, cz, hw, hd, h, [mat, mat, roofM, roofM, mat, mat]);
+      }
+    }
+    return;
+  }
+  for (let i = 0; i < 60; i++) {
+    const a = Math.random() * Math.PI * 2, r = 15 + Math.random() * (ARENA + 40);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (nearSpawn(x, z, 6, 6)) continue;
+    if (i % 4 === 0) addBox(x, z, 1.5, 1.5, 6 + Math.random() * 18, pillarM);
+    else {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, 4.5), trunkM);
+      t.position.set(x, 2.25, z);
+      const l = new THREE.Mesh(new THREE.ConeGeometry(3, 7.5, 8), leafM);
+      l.position.set(x, 7.5, z);
+      world.add(t, l);
+      trees.push({ x, z });
+    }
   }
 }
+buildMap('park');
 
 function makeDrone(color, size) {
   const g = new THREE.Group(), body = new THREE.MeshLambertMaterial({ color }), dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
@@ -156,8 +200,13 @@ let heading = 0;
 const COUNT = 3;
 let enemies = [], caught = 0, time = 0, over = false, msgTimer = 4;
 const ENEMY_MIN = 11.25 * 0.8;  // 80% of tree height
-const rndPoint = () => { const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
-  return new THREE.Vector3(Math.cos(a) * r, ENEMY_MIN + Math.random() * (CEIL - 4 - ENEMY_MIN), Math.sin(a) * r); };
+function rndPoint() {  // a random open spot (not inside a building) for enemies to spawn at or head to
+  for (;;) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
+    const p = new THREE.Vector3(Math.cos(a) * r, ENEMY_MIN + Math.random() * (CEIL - 4 - ENEMY_MIN), Math.sin(a) * r);
+    if (!crashes(p)) return p;
+  }
+}
 function reset() {
   crashT = 0;
   flames.forEach(f => f.visible = false);
@@ -169,14 +218,18 @@ function reset() {
     scene.add(mesh);
     return { mesh, target: rndPoint(), vel: new THREE.Vector3() };
   });
-  player.position.set(0, 10, ARENA - 20);
+  player.position.copy(SPAWN);
   heading = 0; vel.set(0, 0, 0);
   netPos.copy(player.position).y -= BAR_Y + H; netVel.set(0, 0, 0);
   caught = 0; time = 0; over = false;
+  $('score').textContent = `Caught 0 / ${COUNT}`; $('time').textContent = '0.0 s';
   say("Fly your net into the red drones!"); msgTimer = 4;  // also clears the self-check's "Caught!" message
   $('over').className = '';
 }
 $('again').onclick = reset;
+function showMenu() { over = true; $('over').className = ''; $('msg').textContent = ''; $('menu').className = 'show'; }
+$('maps').onclick = showMenu;
+document.querySelectorAll('#menu button').forEach(b => b.onclick = () => { buildMap(b.dataset.map); reset(); $('menu').className = ''; });
 
 // input: keyboard, plus two touch joysticks
 const keys = {};
@@ -215,12 +268,12 @@ const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.V
 const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
 
 const DRONE_R = 1.1;  // player body + rotor reach
-function crashes(q) {  // pillars are 3x3 boxes; trees are a 0.6 trunk up to 3.75 m then a cone tapering from r=3 to 0 at 11.25 m
-  if (pillars.some(o => q.y < o.h + DRONE_R && Math.abs(q.x - o.x) < 1.5 + DRONE_R && Math.abs(q.z - o.z) < 1.5 + DRONE_R)) return true;
+function crashes(q) {  // boxes are pillars or buildings; trees are a 0.6 trunk up to 3.75 m then a cone tapering from r=3 to 0 at 11.25 m
+  if (boxes.some(o => q.y < o.h + DRONE_R && Math.abs(q.x - o.x) < o.hw + DRONE_R && Math.abs(q.z - o.z) < o.hd + DRONE_R)) return true;
   return trees.some(o => q.y < 11.25 + DRONE_R && Math.hypot(q.x - o.x, q.z - o.z) < DRONE_R + (q.y < 3.75 ? 0.6 : 3 * Math.min(1, (11.25 - q.y) / 7.5)));
 }
-console.assert(pillars.length && trees.length && !crashes(new THREE.Vector3(0, 10, ARENA - 20)), 'spawn point must be clear');
-if (pillars.length) { const o = pillars[0]; console.assert(crashes(new THREE.Vector3(o.x + 2, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 2, o.z)), 'pillar hit box'); }
+console.assert(boxes.length && trees.length && !crashes(SPAWN), 'spawn point must be clear');
+{ const o = boxes[0]; console.assert(crashes(new THREE.Vector3(o.x + 2, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 2, o.z)), 'pillar hit box'); }
 function end(title, text, kind) {
   over = true;
   $('title').textContent = title;
@@ -342,7 +395,9 @@ function step(dt) {
       want.subVectors(e.target, m.position).setLength(3);
     }
     e.vel.lerp(want, 1 - Math.exp(-(flee ? 1.5 : 1) * dt));
-    m.position.addScaledVector(e.vel, dt);
+    tmp.copy(m.position).addScaledVector(e.vel, dt);
+    if (crashes(tmp)) { e.vel.set(0, 0, 0); e.target = rndPoint(); }  // blocked by a building: stop and pick a new heading
+    else m.position.copy(tmp);
     const r = Math.hypot(m.position.x, m.position.z);
     if (r > ARENA - 2) { m.position.x *= (ARENA - 2) / r; m.position.z *= (ARENA - 2) / r; e.target = rndPoint(); }
     m.position.y = clamp(m.position.y, ENEMY_MIN, CEIL);
@@ -376,7 +431,12 @@ console.assert(caught >= 1 && enemies[0].caught, 'drone in the net mouth should 
 crash('test');
 for (let i = 0; i < 160; i++) step(1 / 60);
 console.assert(over && $('over').className === 'show crash' && player.position.y < 0.5, 'crash should drop the drone and show the red panel');
+// city map self-check: spawn is in a street and enemy spots avoid buildings
+buildMap('city');
+console.assert(boxes.length > 40 && !crashes(SPAWN) && Array.from({ length: 50 }, rndPoint).every(p => !crashes(p)), 'city map');
 reset();
+showMenu();  // paused until a map is picked
+
 
 let last = performance.now();
 renderer.setAnimationLoop(now => {
