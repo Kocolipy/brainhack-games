@@ -68,7 +68,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // --- tuning ---
 const CHARGE_TIME = 2; // seconds from min range (the red line) to max range
 const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the shortest shot can still reach the line
-const RELOAD_TIME = 0.2; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
+const RELOAD_TIME = 0.5; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
