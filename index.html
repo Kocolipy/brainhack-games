@@ -56,8 +56,8 @@
   <div id="lpad" class="pad"><div class="knob"></div></div>
   <div id="rpad" class="pad"><div class="knob"></div></div>
 </div>
-<div id="over"><h1 id="title"></h1><p id="final"></p><div><button id="again">FLY AGAIN</button> <button id="maps">CHANGE MAP</button></div></div>
-<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a difficulty</p><div><button data-map="park">EASY<small>Park</small></button> <button data-map="city">HARD<small>City &middot; drone sinks unless you hold up</small></button></div></div>
+<div id="over"><h1 id="title"></h1><p id="final"></p><div><button id="again">TRY AGAIN</button> <button id="maps">CHANGE MODE</button></div></div>
+<div id="menu" class="show"><h1>DRONE NET</h1><p>Choose a difficulty</p><div><button data-map="park">EASY<small>Park</small></button> <button data-map="city">HARD<small>City</small></button></div></div>
 <div id="rotate">↻<br>Rotate your device to landscape</div>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -272,13 +272,16 @@ const SPEED = 14, ACCEL = 2, TURN = 2.2, G = 20;  // heavy net: slower top speed
 const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
 const yawQ = new THREE.Quaternion(), local = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
 
-const DRONE_R = 1.1;  // player body + rotor reach
+const DRONE_R = 0.9, DRONE_HALF_H = 0.3;  // drone's sideways reach (arms; blade tips may clip) and half its height
 function crashes(q) {  // boxes are pillars or buildings; trees are a 0.6 trunk up to 3.75 m then a cone tapering from r=3 to 0 at 11.25 m
-  if (boxes.some(o => q.y < o.h + DRONE_R && Math.abs(q.x - o.x) < o.hw + DRONE_R && Math.abs(q.z - o.z) < o.hd + DRONE_R)) return true;
+  // boxes: rounded footprint (distance to the box edge), and only the drone's own thickness above the roof
+  if (boxes.some(o => q.y < o.h + DRONE_HALF_H && Math.hypot(Math.max(0, Math.abs(q.x - o.x) - o.hw), Math.max(0, Math.abs(q.z - o.z) - o.hd)) < DRONE_R)) return true;
   return trees.some(o => q.y < 11.25 + DRONE_R && Math.hypot(q.x - o.x, q.z - o.z) < DRONE_R + (q.y < 3.75 ? 0.6 : 3 * Math.min(1, (11.25 - q.y) / 7.5)));
 }
 console.assert(boxes.length && trees.length && !crashes(SPAWN), 'spawn point must be clear');
-{ const o = boxes[0]; console.assert(crashes(new THREE.Vector3(o.x + 2, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 2, o.z)), 'pillar hit box'); }
+{ const o = boxes[0]; console.assert(crashes(new THREE.Vector3(o.x + o.hw + 0.8, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x + o.hw + 1, o.h - 1, o.z))
+  && crashes(new THREE.Vector3(o.x, o.h + 0.2, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 0.4, o.z))
+  && !crashes(new THREE.Vector3(o.x + o.hw + 0.7, o.h - 1, o.z + o.hd + 0.7)), 'box hit box: 0.9 m to the side, 0.3 m above, rounded corners'); }
 function end(title, text, kind) {
   over = true;
   $('title').textContent = title;
