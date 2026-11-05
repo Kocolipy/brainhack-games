@@ -25,11 +25,12 @@
             background: rgba(0, 0, 0, 0.65); pointer-events: none; display: none; }
   #banner b { display: block; font: 900 clamp(32px, 12vw, 56px) sans-serif; letter-spacing: 4px; }
   #banner span { display: block; margin-top: 4px; font: bold 15px sans-serif; letter-spacing: 3px; }
-  #restart { display: none; margin: 14px auto 2px; padding: 12px 32px; font: bold 18px sans-serif; letter-spacing: 3px;
+  #restart, #back { display: none; width: fit-content; margin: 14px auto 2px; text-decoration: none; padding: 12px 32px; font: bold 18px sans-serif; letter-spacing: 3px;
              color: var(--accent); background: rgba(255, 255, 255, 0.06); border: 2px solid var(--accent);
              border-radius: 4px; cursor: pointer; pointer-events: auto; }
-  #restart:active { color: #0a1a28; background: var(--accent); }
-  #banner.over #restart, #banner.win #restart { display: block; }
+  #restart:active, #back:active { color: #0a1a28; background: var(--accent); }
+  #banner.over :is(#restart, #back), #banner.win :is(#restart, #back) { display: block; }
+  #back { margin-top: 8px; }
   #banner.danger { border-block: 8px solid; border-image: repeating-linear-gradient(-45deg, #fc0 0 14px, #111 14px 28px) 8; }
   #banner.danger b { color: #f33; animation: blink 0.5s steps(1) infinite; }
   #banner.over { --accent: #f44; }
@@ -51,7 +52,7 @@
 <div id="game">
   <div id="hud"><div id="hp"></div><div id="text"></div></div>
   <div id="boss">LEVIATHAN<div id="bossbar"><div id="bossfill"></div></div></div>
-  <div id="banner"><b></b><span></span><button id="restart">RESTART</button></div>
+  <div id="banner"><b></b><span></span><button id="restart">RESTART</button><a id="back" href="../">← BACK</a></div>
   <div id="power"><div id="bar"></div></div>
 </div>
 <div id="rotate">ROTATE TO PORTRAIT</div>
@@ -321,6 +322,12 @@ function spawnRipple(at) {
     return m;
   });
   ripples.push({ rings, t: 0 });
+}
+
+// ships sunk by a shell, and ships that reach the dotted line (they cost a heart but still count as sunk)
+function addSunk() {
+  score++;
+  if (score === COMPLETE_SUNK || score === STAR_SUNK) record(rating()); // saved as it happens
 }
 
 // shells blow up only on a hit; a miss just ripples the water

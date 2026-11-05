@@ -58,6 +58,7 @@
   body.touch #intro .tc { display: inline; }
   body.touch #intro .kb { display: none; }
   #start { margin-top: 10px; padding: 12px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
+  .back { padding: 12px 26px; font: bold 20px sans-serif; border: 2px solid #fd4; border-radius: 12px; color: #fd4; text-decoration: none; }
   #restart { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
 </style>
 </head>
@@ -82,7 +83,7 @@
   <div class="controls"><span class="tc">Left pad: steer · GAS · BRAKE (hold to reverse)</span><span class="kb">W/S drive · A/D steer · Space brake</span></div>
   <button id="start">START DRIVING</button>
 </div>
-<div id="over"><h1>GAME OVER</h1><p id="reason"></p><p id="final"></p><button id="restart">DRIVE AGAIN</button></div>
+<div id="over"><h1>GAME OVER</h1><p id="reason"></p><p id="final"></p><button id="restart">DRIVE AGAIN</button><a class="back" href="../">← BACK</a></div>
 <div id="rotate">↻<br>Rotate your phone to landscape</div>
 <script type="importmap">
 { "imports": {
