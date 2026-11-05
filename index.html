@@ -33,8 +33,14 @@
   #over { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.7); color: #fff;
           flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
   #over.show { display: flex; }
-  #over h1 { margin: 0; color: #fd4; font-size: clamp(28px, 8vmin, 56px); }
-  #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
+  #over h1 { margin: 0; font-size: clamp(28px, 8vmin, 56px); }
+  #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; color: #fff; }
+  #over.crash { background: rgba(90,0,0,0.6); }
+  #over.crash h1 { color: #ff4433; }
+  #over.crash button { background: #d22; }
+  #over.win { background: rgba(0,70,20,0.6); }
+  #over.win h1 { color: #44ee66; }
+  #over.win button { background: #1a3; }
 </style>
 </head>
 <body>
@@ -152,6 +158,8 @@ let enemies = [], caught = 0, time = 0, over = false, msgTimer = 4;
 const rndPoint = () => { const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
   return new THREE.Vector3(Math.cos(a) * r, 4 + Math.random() * (CEIL - 12), Math.sin(a) * r); };
 function reset() {
+  crashT = 0;
+  flames.forEach(f => f.visible = false);
   enemies.forEach(e => scene.remove(e.mesh));
   bag.clear();
   enemies = Array.from({ length: COUNT }, () => {
@@ -165,9 +173,8 @@ function reset() {
   netPos.copy(player.position).y -= BAR_Y + H; netVel.set(0, 0, 0);
   caught = 0; time = 0; over = false;
   say("Fly your net into the red drones!"); msgTimer = 4;  // also clears the self-check's "Caught!" message
-  $('over').classList.remove('show');
+  $('over').className = '';
 }
-reset();
 $('again').onclick = reset;
 
 // input: keyboard, plus two touch joysticks
@@ -212,15 +219,67 @@ function crashes(q) {  // pillars are 3x3 boxes; trees are a 0.4 trunk up to 2.5
 }
 console.assert(pillars.length && trees.length && !crashes(new THREE.Vector3(0, 10, ARENA - 20)), 'spawn point must be clear');
 if (pillars.length) { const o = pillars[0]; console.assert(crashes(new THREE.Vector3(o.x + 2, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 2, o.z)), 'pillar hit box'); }
-function end(title, text) {
+function end(title, text, kind) {
   over = true;
   $('title').textContent = title;
   $('final').textContent = text;
-  $('over').classList.add('show');
+  $('over').className = `show ${kind}`;
+}
+
+// crash: the drone tumbles to the ground in flames, then the red game-over panel shows
+const flameGeo = new THREE.IcosahedronGeometry(0.5, 0);
+const flames = Array.from({ length: 120 }, () => {
+  const f = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({ color: 0xffaa22, transparent: true, depthWrite: false }));
+  f.visible = false;
+  f.userData = { life: 0, max: 1, vel: new THREE.Vector3() };
+  scene.add(f);
+  return f;
+});
+let crashT = 0, crashText = '', nextFlame = 0;
+const fire = new THREE.Color(0xffcc22), ember = new THREE.Color(0xdd2200), smoke = new THREE.Color(0x222222);
+function crash(text) {
+  crashT = 2.2; crashText = text;
+  $('msg').textContent = '';
+  vel.multiplyScalar(0.3).y = 3;  // bounce off whatever we hit
+  for (let i = 0; i < 20; i++) spawnFlame(6);  // initial burst
+}
+function spawnFlame(spread) {
+  const f = flames[nextFlame++ % flames.length], u = f.userData;
+  f.visible = true;
+  f.position.copy(player.position).add(tmp.randomDirection().multiplyScalar(0.3));
+  u.vel.randomDirection().multiplyScalar(spread * Math.random()).y = 1.5 + Math.random() * 2;
+  u.smoke = Math.random() < 0.3;  // some puffs are dark smoke that rises higher and lingers
+  if (u.smoke) u.vel.y += 2;
+  u.life = u.max = (u.smoke ? 1.2 : 0.5) + Math.random() * 0.6;
+}
+function updateFlames(dt) {
+  for (const f of flames) {
+    const u = f.userData;
+    if (!f.visible) continue;
+    if ((u.life -= dt) <= 0) { f.visible = false; continue; }
+    const k = u.life / u.max;
+    f.position.addScaledVector(u.vel, dt);
+    u.vel.multiplyScalar(Math.exp(-3 * dt));
+    f.scale.setScalar((u.smoke ? 2.5 - 1.5 * k : 0.5 + 4 * k * (1 - k)) + Math.random() * 0.3);  // flames swell then shrink, smoke grows; flicker  // swell then shrink, with flicker
+    if (u.smoke) f.material.color.copy(smoke); else f.material.color.copy(ember).lerp(fire, k);
+    f.material.opacity = u.smoke ? 0.6 * k : Math.min(1, 2 * k);
+  }
+}
+function crashStep(dt) {
+  vel.y -= G * dt;
+  const dy = vel.y * dt;
+  player.position.addScaledVector(vel, dt);
+  if (player.position.y < 0.4) { player.position.y = 0.4; vel.set(0, 0, 0); }
+  else { player.rotation.x += 5 * dt; player.rotation.z += 3 * dt; net.position.y = Math.max(0.3, net.position.y + dy); }
+  for (let i = 0; i < 3; i++) spawnFlame(1.5);
+  updateFlames(dt);
+  camera.lookAt(player.position);
+  if ((crashT -= dt) <= 0) end('CRASHED', crashText, 'crash');
 }
 
 function step(dt) {
-  if (over) return;
+  if (over) return updateFlames(dt);  // keep the wreck burning behind the panel
+  if (crashT > 0) return crashStep(dt);
   const L = sticks.lpad, R = sticks.rpad;
   const f = clamp(key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown') - L.y, -1, 1);
   const turn = clamp(key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') - L.x, -1, 1);
@@ -241,7 +300,7 @@ function step(dt) {
   const lf = vel.dot(fwd) / SPEED, ls = vel.dot(right) / SPEED;
   player.rotation.set(-lf * 0.35, heading, -ls * 0.35, 'YXZ');
   spin(player, dt);
-  if (crashes(player.position)) return end('CRASHED', `You hit an obstacle. ${caught} / ${COUNT} caught`);
+  if (crashes(player.position)) return crash(`You hit an obstacle. ${caught} / ${COUNT} caught`);
 
   // pendulum net: netPos is the curtain's bottom edge; gravity + drag, then pin it H below the bar
   const piv = player.position.clone();
@@ -273,7 +332,7 @@ function step(dt) {
       continue;
     }
     // drones are flat: only a body-on-body hit counts (horizontal 1.0 m, vertical 0.4 m)
-    if (Math.hypot(m.position.x - player.position.x, m.position.z - player.position.z) < 1.0 && Math.abs(m.position.y - player.position.y) < 0.4) return end('CRASHED', `You rammed a drone. ${caught} / ${COUNT} caught`);
+    if (Math.hypot(m.position.x - player.position.x, m.position.z - player.position.z) < 1.0 && Math.abs(m.position.y - player.position.y) < 0.4) return crash(`You rammed a drone. ${caught} / ${COUNT} caught`);
     const flee = d < 14;
     if (flee) want.subVectors(m.position, net.position).setLength(5);
     else {
@@ -297,7 +356,7 @@ function step(dt) {
   camera.lookAt(look);
 
   time += dt;
-  if (caught === COUNT) end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`);
+  if (caught === COUNT) end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`, 'win');
   $('score').textContent = `Caught ${caught} / ${COUNT}`;
   $('time').textContent = `${time.toFixed(1)} s`;
   if ((msgTimer -= dt) < 0) $('msg').textContent = '';
@@ -305,12 +364,16 @@ function step(dt) {
 function say(t) { $('msg').textContent = t; msgTimer = 2; }
 
 // self-check: the net hangs straight down under a hovering drone
+reset();
 enemies.forEach(e => e.mesh.position.set(0, CEIL, -ARENA + 5));  // out of the way
 for (let i = 0; i < 300; i++) step(1 / 60);
 console.assert(Math.abs(player.position.y - netPos.y - BAR_Y - H) < 0.05, 'net should hang straight down at rest');
 enemies[0].mesh.position.copy(net.position).y -= H / 2;  // middle of the curtain
 step(1 / 60);
 console.assert(caught >= 1 && enemies[0].caught, 'drone in the net mouth should be caught');
+crash('test');
+for (let i = 0; i < 160; i++) step(1 / 60);
+console.assert(over && $('over').className === 'show crash' && player.position.y < 0.5, 'crash should drop the drone and show the red panel');
 reset();
 
 let last = performance.now();
