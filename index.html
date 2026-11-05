@@ -23,6 +23,8 @@
   .info { padding: 12px 14px 14px; }
   h2 { margin: 0 0 4px; font-size: 20px; }
   p { margin: 0; color: #a8b6c9; font-size: 14px; line-height: 1.4; }
+  .best { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; color: #e8eef6; font-size: 14px; }
+  .best:empty { display: none; }
   .tag { display: inline-block; margin-top: 8px; padding: 2px 8px; border-radius: 6px; background: #22304a; color: #9cc4e4; font-size: 12px; }
 </style>
 </head>
@@ -32,20 +34,37 @@
 <main>
   <a href="defend-zero-days/">
     <div class="thumb"><img class="tall" src="thumbs/defend-zero-days.jpg" alt="Defend Zero Days gameplay"><span class="arm dis">DIS</span></div>
-    <div class="info"><h2>Defend Zero Days</h2><p>Patch your infrastructure before zero-day exploits bring the system down.</p><span class="tag">Portrait</span></div>
+    <div class="info"><h2>Defend Zero Days</h2><p>Patch your infrastructure before zero-day exploits bring the system down.</p><span class="tag">Portrait</span><div class="best"></div></div>
   </a>
   <a href="saf-transport/">
     <div class="thumb"><img src="thumbs/saf-transport.jpg" alt="SAF Transport gameplay"><span class="arm army">ARMY</span></div>
-    <div class="info"><h2>SAF Transport</h2><p>Drive an army truck around SAFTI City and make deliveries against the clock.</p><span class="tag">Landscape</span></div>
+    <div class="info"><h2>SAF Transport</h2><p>Drive an army truck around SAFTI City and make deliveries against the clock.</p><span class="tag">Landscape</span><div class="best"></div></div>
   </a>
   <a href="tackle-drones/">
     <div class="thumb"><img src="thumbs/tackle-drones.jpg" alt="Tackle Drones gameplay"><span class="arm air">AIR FORCE</span></div>
-    <div class="info"><h2>Tackle Drones</h2><p>Fly a drone with a hanging net and catch the rogue drones.</p><span class="tag">Landscape</span></div>
+    <div class="info"><h2>Tackle Drones</h2><p>Fly a drone with a hanging net and catch the rogue drones.</p><span class="tag">Landscape</span><div class="best"></div></div>
   </a>
   <a href="artillery-defence/">
     <div class="thumb"><img class="tall" src="thumbs/artillery-defence.jpg" alt="Artillery Defence gameplay"><span class="arm navy">NAVY</span></div>
-    <div class="info"><h2>Artillery Defence</h2><p>Defend the coast from incoming warships with your frigate's gun.</p><span class="tag">Portrait</span></div>
+    <div class="info"><h2>Artillery Defence</h2><p>Defend the coast from incoming warships with your frigate's gun.</p><span class="tag">Portrait</span><div class="best"></div></div>
   </a>
 </main>
+<script src="records.js"></script>
+<script>
+// personal bests from this browser (each game saves them in localStorage): stars, COMPLETED tag and a best score
+const s = t => t.toFixed(1) + '\u00a0s';  // no-break space: keep the unit with its number
+const BEST = {
+  'defend-zero-days': r => r.days != null && `Best: ${r.days} day${r.days === 1 ? '' : 's'} · ${r.patched} patched`,
+  'saf-transport': r => r.score != null && `Best: ${r.score.toLocaleString()} · ${r.delivered} deliveries`,
+  'tackle-drones': r => (r.easy || r.hard) && 'Fastest: ' + [r.easy && `Easy ${s(r.easy)}`, r.hard && `Hard ${s(r.hard)}`].filter(Boolean).join(' · '),
+  'artillery-defence': r => r.sunk != null && `Most sunk: ${r.sunk}`,
+};
+for (const a of document.querySelectorAll('main a')) {
+  const game = a.getAttribute('href').replace('/', ''), r = records.get(game);
+  if (!Object.keys(r).length) continue;  // never played here
+  const text = BEST[game](r);
+  a.querySelector('.best').innerHTML = records.badge(r) + (text ? `<span>${text}</span>` : '');
+}
+</script>
 </body>
 </html>
