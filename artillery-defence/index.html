@@ -61,6 +61,7 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
+<script src="../records.js"></script>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -226,8 +227,12 @@ const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, minRange(ai
 
 // --- game objects ---
 const shells = [], enemies = [], blasts = [], sinking = [];
-let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false;
-if (new URLSearchParams(location.search).has('boss')) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
+let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false, bossReached = false;
+const practice = new URLSearchParams(location.search).has('boss');
+if (practice) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
+// personal best for the landing page (?boss practice runs are not recorded): completed = reached the boss,
+// stars = hearts left when the boss went down (3 = flawless, 0 = never beaten), sunk = most ships sunk in one run
+const record = (r, sunk = 0) => practice || records.save('artillery-defence', r, o => ({ sunk: Math.max(o.sunk ?? 0, sunk) }));
 // announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
 const bannerEl = document.getElementById('banner');
 // shortcut: restart = page reload (assets come from the browser cache), swap for an in-place reset if reloads feel slow
@@ -320,8 +325,11 @@ function explode(at) {
       setBossFlash(boss, false);
       boss = null;
       won = true;
+      const result = { completed: true, stars: hp };
+      record(result, score);
       if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
       else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
+      records.show(bannerEl.querySelector('span'), result);
       bossEl.style.display = 'none';
     }
   }
@@ -347,6 +355,8 @@ function spawnBoss() {
   bossEl.style.display = 'block';
   showBanner('DANGER!', 'LEVIATHAN APPROACHING', 'danger', 3000);
   gameEl.classList.add('bossfight'); // hearts and counters make way for the boss bar
+  bossReached = true;
+  record({ completed: true });
 }
 
 function startLunge(b, sideways, threatX) {
@@ -462,7 +472,11 @@ renderer.setAnimationLoop(() => {
     if (w.t === 1) { scene.remove(m); sinking.splice(i, 1); }
   }
 
-  if (hp <= 0 && !overShown) { overShown = true; showBanner('GAME OVER', `SUNK ${score}`, 'over'); }
+  if (hp <= 0 && !overShown) { overShown = true;
+    record({}, score);
+    showBanner('GAME OVER', `SUNK ${score}`, 'over');
+    records.show(bannerEl.querySelector('span'), { completed: bossReached });
+  }
   text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}`
     : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`
     : boss ? `Sunk: ${score} — the Leviathan approaches!`

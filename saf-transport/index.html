@@ -90,6 +90,7 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
+<script src="../records.js"></script>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -274,11 +275,14 @@ newJob(null);
 startLeg();
 console.assert(legTime(300, 0) > legTime(300, 5) && legTime(300, 100) === legTime(300, 0) * 0.2 &&
                legTime(300, 3, true) === legTime(300, 3) + 5 && depots.some(d => d.name === 'Secure Compound'), 'leg timer rules');
+// this run's rating: completed at 1 delivery, stars at 3 / 7 / 10 deliveries
+const rating = () => ({ completed: delivered >= 1, stars: records.stars(delivered, [3, 7, 10]) });
 function gameOver(reason) {
   over = true;
   speed = 0;
   $('reason').textContent = reason;
   $('final').textContent = `Score ${score} · Deliveries ${delivered}`;
+  records.show($('final'), rating());
   $('over').classList.add('show');
 }
 $('restart').addEventListener('click', () => location.reload());
@@ -388,6 +392,9 @@ renderer.setAnimationLoop(() => {
     if (!loaded) { loaded = true; say(`Cargo loaded at ${tg.name} +${pts}`); }
     else { delivered++; say(`Delivered to ${tg.name}! +${pts}`); newJob(tg); }
     startLeg();
+    // personal best for the landing page, saved as it happens; best = highest score
+    records.save('saf-transport', rating(),
+      o => score > (o.score ?? -1) ? { score, delivered } : {});
   }
   if ((timeLeft -= dt) <= 0) return gameOver(`Out of time for ${tg.name}`);
   $('timer').textContent = Math.ceil(timeLeft);

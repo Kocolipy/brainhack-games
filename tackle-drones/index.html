@@ -62,6 +62,7 @@
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
 </script>
+<script src="../records.js"></script>
 <script type="module">
 import * as THREE from 'three';
 
@@ -284,10 +285,13 @@ console.assert(boxes.length && trees.length && !crashes(SPAWN), 'spawn point mus
 { const o = boxes[0]; console.assert(crashes(new THREE.Vector3(o.x + o.hw + 0.8, o.h - 1, o.z)) && !crashes(new THREE.Vector3(o.x + o.hw + 1, o.h - 1, o.z))
   && crashes(new THREE.Vector3(o.x, o.h + 0.2, o.z)) && !crashes(new THREE.Vector3(o.x, o.h + 0.4, o.z))
   && !crashes(new THREE.Vector3(o.x + o.hw + 0.7, o.h - 1, o.z + o.hd + 0.7)), 'box hit box: 0.9 m to the side, 0.3 m above, rounded corners'); }
+// this run's rating: one drone caught completes it; stars need all caught: 1 on Easy, 2 on Hard, 3 on Hard under 90 s
+const rating = () => ({ completed: caught >= 1, stars: caught < COUNT ? 0 : !hard ? 1 : time < 90 ? 3 : 2 });
 function end(title, text, kind) {
   over = true;
   $('title').textContent = title;
   $('final').textContent = text;
+  records.show($('final'), rating());
   $('over').className = `show ${kind}`;
 }
 
@@ -402,6 +406,7 @@ function step(dt) {
     net.worldToLocal(local);
     if (Math.abs(local.x) < NW && local.y > -H && local.y < 0 && Math.abs(local.z) < 1) {  // flew into the curtain: caught
       e.caught = true; caught++;
+      if (!checking) records.save('tackle-drones', rating());  // saved as it happens
       scene.remove(m);
       m.position.copy(curtain((Math.random() - 0.5) * NW * 1.4, -H * (0.4 + Math.random() * 0.5))).z += 0.3;
       m.rotation.set(Math.random() * 2, 0, Math.random() * 2);
@@ -439,7 +444,12 @@ function step(dt) {
   fadeBlockers(dt);
 
   time += dt;
-  if (caught === COUNT) end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`, 'win');
+  if (caught === COUNT) {
+    end('ALL DRONES CAUGHT', `${COUNT} drones netted in ${time.toFixed(1)} s`, 'win');
+    // personal best for the landing page: fastest full catch per mode
+    const mode = hard ? 'hard' : 'easy';
+    if (!checking) records.save('tackle-drones', rating(), o => ({ [mode]: Math.min(o[mode] ?? Infinity, time) }));
+  }
   $('score').textContent = `Caught ${caught} / ${COUNT}`;
   $('time').textContent = `${time.toFixed(1)} s`;
   if ((msgTimer -= dt) < 0) $('msg').textContent = '';
@@ -447,6 +457,7 @@ function step(dt) {
 function say(t) { $('msg').textContent = t; msgTimer = 2; }
 
 // self-check: the net hangs straight down under a hovering drone
+let checking = true;  // self-check catches don't count as records
 reset();
 enemies.forEach(e => e.mesh.position.set(0, CEIL, -ARENA + 5));  // out of the way
 for (let i = 0; i < 300; i++) step(1 / 60);
@@ -464,6 +475,7 @@ reset();
 for (let i = 0; i < 30; i++) step(1 / 60);
 console.assert(hard && player.position.y < SPAWN.y - 0.3 && !over, 'hard mode: drone sinks with no input');
 reset();
+checking = false;
 showMenu();  // paused until a map is picked
 
 
