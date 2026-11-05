@@ -37,6 +37,9 @@
   #banner.win { border-block: 4px solid #fc4; }
   #banner.win { --accent: #fd4; }
   #banner.win b { color: var(--accent); }
+  #banner.flawless b { font-size: clamp(24px, 8vw, 40px); text-shadow: 0 0 12px #fd4; }
+  #game.bossfight #hud { display: none; }
+  #game.bossfight #boss { top: 14px; }
   @keyframes blink { 50% { opacity: 0.25; } }
 </style>
 </head>
@@ -66,7 +69,7 @@ const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this fa
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
 // final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
 const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
-const TOTAL_SHIPS = 30, BOSS_HP = 12, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
+const TOTAL_SHIPS = 30, BOSS_HP = 15, BOSS_WIDTH = 0.2; // BOSS_WIDTH = fraction of screen width
 const BOSS_SPEED = 5, LUNGE_SPEED = 20, LUNGE_TIME = 0.4, LUNGE_EVERY = 3, DODGE_COOLDOWN = 2.25; // units/s, seconds
 
 // Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
@@ -293,7 +296,8 @@ function explode(at) {
       setBossFlash(boss, false);
       boss = null;
       won = true;
-      showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
+      if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
+      else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
       bossEl.style.display = 'none';
     }
   }
@@ -318,6 +322,7 @@ function spawnBoss() {
   bossFill.style.width = '100%';
   bossEl.style.display = 'block';
   showBanner('DANGER!', 'LEVIATHAN APPROACHING', 'danger', 3000);
+  gameEl.classList.add('bossfight'); // hearts and counters make way for the boss bar
 }
 
 function startLunge(b, sideways, threatX) {
