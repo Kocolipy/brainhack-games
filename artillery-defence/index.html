@@ -72,7 +72,7 @@ const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the sh
 const RELOAD_TIME = 0.2; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 1.25, RIPPLE_TIME = 1.2; // seconds
-const COMPLETE_SUNK = 10; // ships sunk in one run for the COMPLETED tag
+const COMPLETE_SUNK = 10, STAR_SUNK = 20; // ships sunk in one run for the COMPLETED tag / the first star
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
 // enemy classes (models in assets/, built by tools/make_assets.py); smaller = faster
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
@@ -231,9 +231,10 @@ const shells = [], enemies = [], blasts = [], sinking = [], ripples = [];
 let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false;
 const practice = new URLSearchParams(location.search).has('boss');
 if (practice) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
-// personal best for the landing page (?boss practice runs are not recorded): completed = COMPLETE_SUNK ships sunk in a run,
-// stars = hearts left when the boss went down (3 = flawless, 0 = never beaten), sunk = most ships sunk in one run
-const GOALS = ['Sink the Leviathan', 'Sink the Leviathan with 2 hearts left', 'Sink the Leviathan without losing a heart'];
+// this run's rating: completed = COMPLETE_SUNK ships sunk; 1 star = STAR_SUNK ships sunk, 2 = Leviathan sunk, 3 = flawless victory
+const rating = () => ({ completed: score >= COMPLETE_SUNK, stars: won ? (hp === MAX_HP ? 3 : 2) : score >= STAR_SUNK ? 1 : 0 });
+const GOALS = [`Sink ${STAR_SUNK} ships`, 'Sink the Leviathan', 'Sink the Leviathan without losing a heart'];
+// personal best for the landing page (?boss practice runs are not recorded); sunk = most ships sunk in one run
 const record = (r, sunk = 0) => practice || records.save('artillery-defence', r, o => ({ sunk: Math.max(o.sunk ?? 0, sunk) }));
 // announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
 const bannerEl = document.getElementById('banner');
@@ -331,7 +332,7 @@ function explode(at) {
     enemies.splice(i, 1);
     hit = true;
     score++;
-    if (score === COMPLETE_SUNK) record({ completed: true });
+    if (score === COMPLETE_SUNK || score === STAR_SUNK) record(rating()); // saved as it happens
     spawnBlast(e.mesh.position, e.halfD); // secondary explosion on the ship itself
     sinking.push({ ...e, t: 0, roll: (Math.random() < 0.5 ? -1 : 1) * (0.3 + Math.random() * 0.3) });
   }
@@ -347,7 +348,7 @@ function explode(at) {
       setBossFlash(boss, false);
       boss = null;
       won = true;
-      const result = { completed: score >= COMPLETE_SUNK, stars: hp };
+      const result = rating();
       record(result, score);
       if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
       else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
@@ -507,9 +508,9 @@ renderer.setAnimationLoop(() => {
   }
 
   if (hp <= 0 && !overShown) { overShown = true;
-    record({}, score);
+    record(rating(), score);
     showBanner('GAME OVER', `SUNK ${score}`, 'over');
-    records.show(bannerEl.querySelector('span'), { completed: score >= COMPLETE_SUNK }, GOALS);
+    records.show(bannerEl.querySelector('span'), rating(), GOALS);
   }
   text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}`
     : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`
