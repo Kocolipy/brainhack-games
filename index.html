@@ -215,6 +215,10 @@ cv.addEventListener('pointerdown', e => {
   deploy(Math.min(LANES.length - 1, Math.floor(x / (W / LANES.length))));
 });
 addEventListener('contextmenu', e => e.preventDefault());
+// any click or tap goes fullscreen (again, if the player left it); pointerup because browsers only allow it once a touch lifts; not supported on iPhone Safari
+addEventListener('pointerup', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('portrait')).catch(() => {});
+});
 
 let running = false;
 function start() {
