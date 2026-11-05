@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Drone Net</title>
+<style>
+  body { margin: 0; height: 100dvh; overflow: hidden; background: #000; font-family: sans-serif;
+         touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; }
+  #hud { position: absolute; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+         color: #fff; font-size: clamp(12px, 2.2vmin + 4px, 18px); text-shadow: 0 0 4px #000; pointer-events: none; }
+  #score { font-size: 1.4em; font-weight: bold; color: #fd4; }
+  #msg { position: absolute; top: 28%; width: 100%; text-align: center; color: #fff; font: bold clamp(18px, 5vmin, 32px) sans-serif;
+         text-shadow: 0 0 6px #000; pointer-events: none; }
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  body.touch #keys { display: none; }
+  .pad { position: absolute; bottom: 4vh; width: 34vh; height: 34vh; border-radius: 50%;
+         background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.3); }
+  #lpad { left: max(3vw, env(safe-area-inset-left)); }
+  #rpad { right: max(3vw, env(safe-area-inset-right)); }
+  .pad::after { position: absolute; top: -20px; width: 100%; text-align: center; color: rgba(255,255,255,0.7); font-size: 13px; }
+  #lpad::after { content: 'move / turn'; }
+  #rpad::after { content: 'up-down / strafe'; }
+  .knob { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px; border-radius: 50%;
+          background: rgba(255,255,255,0.35); border: 2px solid #fff; pointer-events: none; }
+  #rotate { display: none; position: absolute; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
+            align-items: center; justify-content: center; text-align: center; z-index: 9; }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+  #over { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(0,0,0,0.7); color: #fff;
+          flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  #over.show { display: flex; }
+  #over h1 { margin: 0; color: #fd4; font-size: clamp(28px, 8vmin, 56px); }
+  #over button { margin-top: 12px; padding: 14px 28px; font: bold 20px sans-serif; border: 0; border-radius: 12px; background: #fd4; }
+</style>
+</head>
+<body>
+<div id="hud"><div id="score"></div><div id="time"></div>
+  <div id="keys">W/S forward/back &middot; A/D turn &middot; Q/E strafe &middot; Space up &middot; Shift down</div></div>
+<div id="msg">Swing your net into the red drones!</div>
+<div id="touch">
+  <div id="lpad" class="pad"><div class="knob"></div></div>
+  <div id="rpad" class="pad"><div class="knob"></div></div>
+</div>
+<div id="over"><h1>ALL DRONES CAUGHT</h1><p id="final"></p><button id="again">FLY AGAIN</button></div>
+<div id="rotate">↻<br>Rotate your device to landscape</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const $ = id => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cc4e4);
+scene.fog = new THREE.Fog(0x9cc4e4, 60, 220);
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x445533, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(60, 120, 30);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 500);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+// world: grass field with scattered pillars and trees for depth cues (no collisions)
+const ARENA = 90, CEIL = 40;
+const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 48), new THREE.MeshLambertMaterial({ color: 0x5f8a3c }));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const grid = new THREE.GridHelper(ARENA * 2, 36, 0x3d5c26, 0x4d7330);
+grid.position.y = 0.02;
+scene.add(grid);
+const edge = new THREE.Mesh(new THREE.TorusGeometry(ARENA, 0.3, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffdd44 }));
+edge.rotation.x = Math.PI / 2;
+scene.add(edge);
+const trunkM = new THREE.MeshLambertMaterial({ color: 0x6b4a2b }), leafM = new THREE.MeshLambertMaterial({ color: 0x2f6b2a });
+const pillarM = new THREE.MeshLambertMaterial({ color: 0xb8b0a0 });
+for (let i = 0; i < 60; i++) {
+  const a = Math.random() * Math.PI * 2, r = 15 + Math.random() * (ARENA + 40);
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  if (i % 4 === 0) {
+    const h = 6 + Math.random() * 18;
+    const p = new THREE.Mesh(new THREE.BoxGeometry(3, h, 3), pillarM);
+    p.position.set(x, h / 2, z);
+    scene.add(p);
+  } else {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 3), trunkM);
+    t.position.set(x, 1.5, z);
+    const l = new THREE.Mesh(new THREE.ConeGeometry(2, 5, 8), leafM);
+    l.position.set(x, 5, z);
+    scene.add(t, l);
+  }
+}
+
+function makeDrone(color, size) {
+  const g = new THREE.Group(), body = new THREE.MeshLambertMaterial({ color }), dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(size, size * 0.3, size), body));
+  const rotors = [];
+  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(size * 0.15, size * 0.1, size * 1.5), dark);
+    arm.position.set(x * size * 0.5, 0, z * size * 0.5);
+    arm.rotation.y = Math.atan2(x, z);
+    const rotor = new THREE.Mesh(new THREE.BoxGeometry(size * 0.9, size * 0.03, size * 0.1), dark);
+    rotor.position.set(x * size, size * 0.2, z * size);
+    g.add(arm, rotor);
+    rotors.push(rotor);
+  }
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(size * 0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  eye.position.set(0, 0, -size * 0.5);  // marks the front
+  g.add(eye);
+  g.userData.rotors = rotors;
+  return g;
+}
+const spin = (d, dt) => d.userData.rotors.forEach((r, i) => r.rotation.y += (i % 2 ? 40 : -40) * dt);
+
+// player drone, and a net hanging on a rope that swings like a pendulum
+const player = makeDrone(0x3366ff, 1.2);
+scene.add(player);
+const ROPE = 4, NET_R = 1.8;
+const net = new THREE.Group();
+const ring = new THREE.Mesh(new THREE.TorusGeometry(NET_R, 0.08, 6, 24), new THREE.MeshLambertMaterial({ color: 0xffaa00 }));
+ring.rotation.x = Math.PI / 2;
+const bag = new THREE.Mesh(new THREE.SphereGeometry(NET_R, 12, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.6 }));
+bag.scale.y = 1.2;
+net.add(ring, bag);
+scene.add(net);
+const ropeGeo = new THREE.BufferGeometry().setFromPoints(Array(8).fill().map(() => new THREE.Vector3()));
+const rope = new THREE.LineSegments(ropeGeo, new THREE.LineBasicMaterial({ color: 0x222222 }));
+rope.frustumCulled = false;
+scene.add(rope);
+
+const vel = new THREE.Vector3(), netPos = new THREE.Vector3(), netVel = new THREE.Vector3();
+let heading = 0;
+
+// enemy drones wander and flee when the net comes near
+const COUNT = 10;
+let enemies = [], caught = 0, time = 0, over = false, msgTimer = 4;
+const rndPoint = () => { const a = Math.random() * Math.PI * 2, r = Math.random() * (ARENA - 10);
+  return new THREE.Vector3(Math.cos(a) * r, 4 + Math.random() * (CEIL - 12), Math.sin(a) * r); };
+function reset() {
+  enemies.forEach(e => scene.remove(e.mesh));
+  bag.clear();
+  enemies = Array.from({ length: COUNT }, () => {
+    const mesh = makeDrone(0xdd3322, 0.7);
+    mesh.position.copy(rndPoint());
+    scene.add(mesh);
+    return { mesh, target: rndPoint(), vel: new THREE.Vector3() };
+  });
+  player.position.set(0, 10, ARENA - 20);
+  heading = 0; vel.set(0, 0, 0);
+  netPos.copy(player.position).y -= ROPE; netVel.set(0, 0, 0);
+  caught = 0; time = 0; over = false;
+  $('over').classList.remove('show');
+}
+reset();
+$('again').onclick = reset;
+
+// input: keyboard, plus two touch joysticks
+const keys = {};
+addEventListener('keydown', e => keys[e.code] = true);
+addEventListener('keyup', e => keys[e.code] = false);
+const key = (...c) => c.some(k => keys[k]) ? 1 : 0;
+if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
+addEventListener('touchstart', () => {
+  document.body.classList.add('touch');
+  document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+}, { once: true });
+const sticks = {};
+for (const id of ['lpad', 'rpad']) {
+  const pad = $(id), knob = pad.firstElementChild, s = sticks[id] = { x: 0, y: 0, id: null };
+  const move = e => {
+    if (e.pointerId !== s.id) return;
+    const b = pad.getBoundingClientRect(), R = b.width / 2;
+    let dx = e.clientX - b.left - R, dy = e.clientY - b.top - R;
+    const l = Math.hypot(dx, dy);
+    if (l > R) { dx *= R / l; dy *= R / l; }
+    s.x = dx / R; s.y = dy / R;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+  const end = e => { if (e.pointerId === s.id) { s.id = null; s.x = s.y = 0; knob.style.transform = ''; } };
+  pad.addEventListener('pointerdown', e => { s.id = e.pointerId; pad.setPointerCapture(e.pointerId); move(e); });
+  pad.addEventListener('pointermove', move);
+  pad.addEventListener('pointerup', end);
+  pad.addEventListener('pointercancel', end);
+}
+addEventListener('contextmenu', e => e.preventDefault());
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const SPEED = 16, ACCEL = 3, TURN = 2.2, G = 20;
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), want = new THREE.Vector3(), tmp = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0), camPos = new THREE.Vector3(0, 20, ARENA), look = new THREE.Vector3();
+
+function step(dt) {
+  const L = sticks.lpad, R = sticks.rpad;
+  const f = clamp(key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown') - L.y, -1, 1);
+  const turn = clamp(key('KeyA', 'ArrowLeft') - key('KeyD', 'ArrowRight') - L.x, -1, 1);
+  const strafe = clamp(key('KeyE') - key('KeyQ') + R.x, -1, 1);
+  const lift = clamp(key('Space') - key('ShiftLeft', 'ShiftRight') - R.y, -1, 1);
+
+  heading += turn * TURN * dt;
+  fwd.set(-Math.sin(heading), 0, -Math.cos(heading));
+  right.set(Math.cos(heading), 0, -Math.sin(heading));
+  want.copy(fwd).multiplyScalar(f * SPEED).addScaledVector(right, strafe * SPEED * 0.7);
+  want.y = lift * SPEED * 0.6;
+  vel.lerp(want, 1 - Math.exp(-ACCEL * dt));
+  player.position.addScaledVector(vel, dt);
+  const hr = Math.hypot(player.position.x, player.position.z);
+  if (hr > ARENA) player.position.multiplyScalar(ARENA / hr);  // scales y too, but it's clamped right after
+  player.position.y = clamp(player.position.y, ROPE + 0.5, CEIL);
+  // lean into the motion for feel
+  const lf = vel.dot(fwd) / SPEED, ls = vel.dot(right) / SPEED;
+  player.rotation.set(-lf * 0.35, heading, -ls * 0.35, 'YXZ');
+  spin(player, dt);
+
+  // pendulum net: gravity + drag, then pin to rope length
+  netVel.y -= G * dt;
+  netVel.multiplyScalar(Math.exp(-1.2 * dt));
+  netPos.addScaledVector(netVel, dt);
+  tmp.subVectors(netPos, player.position).setLength(ROPE).add(player.position);  // pinned position
+  netVel.addScaledVector(tmp.clone().sub(netPos), 1 / dt);
+  netPos.copy(tmp);
+  if (netPos.y < 0.3) { netPos.y = 0.3; netVel.y = Math.max(0, netVel.y); }
+  net.position.copy(netPos);
+  net.quaternion.setFromUnitVectors(UP, tmp.subVectors(player.position, netPos).normalize());
+  net.updateMatrixWorld();
+  const p = ropeGeo.attributes.position;
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2;
+    p.setXYZ(i * 2, player.position.x, player.position.y - 0.2, player.position.z);
+    const rim = new THREE.Vector3(Math.cos(a) * NET_R, 0, Math.sin(a) * NET_R).applyMatrix4(net.matrixWorld);
+    p.setXYZ(i * 2 + 1, rim.x, rim.y, rim.z);
+  }
+  p.needsUpdate = true;
+
+  // enemies
+  for (const e of enemies) {
+    if (e.caught) continue;
+    const m = e.mesh, d = m.position.distanceTo(netPos);
+    if (d < NET_R) {  // inside the net mouth: caught
+      e.caught = true; caught++;
+      scene.remove(m);
+      m.position.set((Math.random() - 0.5) * NET_R * 0.8, -NET_R * 0.6, (Math.random() - 0.5) * NET_R * 0.8);
+      m.rotation.set(Math.random() * 2, 0, Math.random() * 2);
+      bag.add(m);  // bag is scaled 1.2 on y; fine for a dangling trophy
+      say(caught < COUNT ? `Caught! ${COUNT - caught} to go` : '');
+      continue;
+    }
+    const flee = d < 14;
+    if (flee) want.subVectors(m.position, netPos).setLength(9);
+    else {
+      if (m.position.distanceTo(e.target) < 3) e.target = rndPoint();
+      want.subVectors(e.target, m.position).setLength(5);
+    }
+    e.vel.lerp(want, 1 - Math.exp(-(flee ? 1.5 : 1) * dt));
+    m.position.addScaledVector(e.vel, dt);
+    const r = Math.hypot(m.position.x, m.position.z);
+    if (r > ARENA - 2) { m.position.x *= (ARENA - 2) / r; m.position.z *= (ARENA - 2) / r; e.target = rndPoint(); }
+    m.position.y = clamp(m.position.y, 2, CEIL);
+    m.rotation.y = Math.atan2(-e.vel.x, -e.vel.z);
+    spin(m, dt);
+  }
+
+  // 3rd person chase camera, a bit above so the net stays in view
+  tmp.copy(player.position).addScaledVector(fwd, -11).y += 6;
+  camPos.lerp(tmp, 1 - Math.exp(-4 * dt));
+  camera.position.copy(camPos);
+  look.copy(player.position).addScaledVector(fwd, 4).y -= 2;
+  camera.lookAt(look);
+
+  if (!over) time += dt;
+  if (caught === COUNT && !over) {
+    over = true;
+    $('final').textContent = `${COUNT} drones netted in ${time.toFixed(1)} s`;
+    $('over').classList.add('show');
+  }
+  $('score').textContent = `Caught ${caught} / ${COUNT}`;
+  $('time').textContent = `${time.toFixed(1)} s`;
+  if ((msgTimer -= dt) < 0) $('msg').textContent = '';
+}
+function say(t) { $('msg').textContent = t; msgTimer = 2; }
+
+// self-check: the net settles one rope length under a hovering drone
+for (let i = 0; i < 300; i++) step(1 / 60);
+console.assert(Math.abs(player.position.y - netPos.y - ROPE) < 0.05, 'net should hang straight down at rest');
+enemies[0].mesh.position.copy(netPos);
+step(1 / 60);
+console.assert(caught >= 1 && enemies[0].caught, 'drone in the net mouth should be caught');
+reset();
+
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  step(Math.min(0.05, (now - last) / 1000));
+  last = now;
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
