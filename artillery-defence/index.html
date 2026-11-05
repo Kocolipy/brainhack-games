@@ -71,7 +71,8 @@ const CHARGE_TIME = 2; // seconds from min range (the red line) to max range
 const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the shortest shot can still reach the line
 const RELOAD_TIME = 0.2; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
-const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
+const BLAST_TIME = 1.2, SINK_TIME = 1.25, RIPPLE_TIME = 1.2; // seconds
+const COMPLETE_SUNK = 10; // ships sunk in one run for the COMPLETED tag
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
 // enemy classes (models in assets/, built by tools/make_assets.py); smaller = faster
 const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
@@ -226,11 +227,11 @@ addEventListener('contextmenu', e => e.preventDefault()); // long-press on mobil
 const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, minRange(aimDir) + (maxRange - minRange(aimDir)) * charge);
 
 // --- game objects ---
-const shells = [], enemies = [], blasts = [], sinking = [];
-let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false, bossReached = false;
+const shells = [], enemies = [], blasts = [], sinking = [], ripples = [];
+let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false;
 const practice = new URLSearchParams(location.search).has('boss');
 if (practice) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
-// personal best for the landing page (?boss practice runs are not recorded): completed = reached the boss,
+// personal best for the landing page (?boss practice runs are not recorded): completed = COMPLETE_SUNK ships sunk in a run,
 // stars = hearts left when the boss went down (3 = flawless, 0 = never beaten), sunk = most ships sunk in one run
 const record = (r, sunk = 0) => practice || records.save('artillery-defence', r, o => ({ sunk: Math.max(o.sunk ?? 0, sunk) }));
 // announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
@@ -304,17 +305,37 @@ function spawnBlast(at, size) {
   blasts.push({ mesh, size, t: 0, fire: mesh.getObjectByName('Fireball'), smoke: mesh.getObjectByName('Smoke') });
 }
 
+const clamp01 = x => Math.min(Math.max(x, 0), 1);
+// Missed shell: rings spread out across the water and fade (RIPPLE_RINGS rings, each starting a little later).
+const RIPPLE_RINGS = 3, rippleGeo = new THREE.RingGeometry(0.85, 1, 48);
+const rippleMat = new THREE.MeshBasicMaterial({ color: 0xdff4ff, transparent: true, depthWrite: false });
+function spawnRipple(at) {
+  const rings = Array.from({ length: RIPPLE_RINGS }, () => {
+    const m = new THREE.Mesh(rippleGeo, rippleMat.clone());
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(at.x, 0.06, at.z);
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+  ripples.push({ rings, t: 0 });
+}
+
+// shells blow up only on a hit; a miss just ripples the water
 function explode(at) {
-  spawnBlast(at, SPLASH);
+  let hit = false;
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
     if (!blastHits(at, e.mesh.position, e.halfW, e.halfD)) continue;
     enemies.splice(i, 1);
+    hit = true;
     score++;
+    if (score === COMPLETE_SUNK) record({ completed: true });
     spawnBlast(e.mesh.position, e.halfD); // secondary explosion on the ship itself
     sinking.push({ ...e, t: 0, roll: (Math.random() < 0.5 ? -1 : 1) * (0.3 + Math.random() * 0.3) });
   }
   if (boss && hp > 0 && blastHits(at, boss.mesh.position, boss.halfW, boss.halfD)) { // no win from shells still in the air after a loss
+    hit = true;
     boss.hp--;
     boss.flash = 0.15;
     bossFill.style.width = boss.hp / BOSS_HP * 100 + '%';
@@ -325,7 +346,7 @@ function explode(at) {
       setBossFlash(boss, false);
       boss = null;
       won = true;
-      const result = { completed: true, stars: hp };
+      const result = { completed: score >= COMPLETE_SUNK, stars: hp };
       record(result, score);
       if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
       else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
@@ -333,6 +354,7 @@ function explode(at) {
       bossEl.style.display = 'none';
     }
   }
+  if (hit) spawnBlast(at, SPLASH); else spawnRipple(at);
 }
 
 // --- boss ---
@@ -355,8 +377,6 @@ function spawnBoss() {
   bossEl.style.display = 'block';
   showBanner('DANGER!', 'LEVIATHAN APPROACHING', 'danger', 3000);
   gameEl.classList.add('bossfight'); // hearts and counters make way for the boss bar
-  bossReached = true;
-  record({ completed: true });
 }
 
 function startLunge(b, sideways, threatX) {
@@ -462,6 +482,19 @@ renderer.setAnimationLoop(() => {
     if (b.t === 1) { scene.remove(b.mesh); blasts.splice(i, 1); }
   }
 
+  // ripples: each ring grows from the impact point out past the splash radius while fading
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    r.t = Math.min(r.t + dt / RIPPLE_TIME, 1);
+    r.rings.forEach((m, k) => {
+      const u = clamp01((r.t - k * 0.2) / 0.6); // ring k starts at 0.2·k and lasts 60% of the ripple
+      m.visible = u > 0 && u < 1;
+      m.scale.setScalar(SPLASH * (0.2 + 1.1 * (1 - (1 - u) ** 2))); // fast out, then easing
+      m.material.opacity = 0.85 * (1 - u);
+    });
+    if (r.t === 1) { r.rings.forEach(m => { scene.remove(m); m.material.dispose(); }); ripples.splice(i, 1); }
+  }
+
   // death animation: coast to a stop, roll over, dip the bow and slip under
   for (let i = sinking.length - 1; i >= 0; i--) {
     const w = sinking[i], m = w.mesh;
@@ -475,7 +508,7 @@ renderer.setAnimationLoop(() => {
   if (hp <= 0 && !overShown) { overShown = true;
     record({}, score);
     showBanner('GAME OVER', `SUNK ${score}`, 'over');
-    records.show(bannerEl.querySelector('span'), { completed: bossReached });
+    records.show(bannerEl.querySelector('span'), { completed: score >= COMPLETE_SUNK });
   }
   text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}`
     : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`
