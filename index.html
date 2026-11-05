@@ -66,8 +66,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // --- tuning ---
-const MIN_RANGE = 5, CHARGE_TIME = 2; // seconds from min to max range
-const RELOAD_TIME = 0.2; // seconds after a shot during which a new press fires but its range doesn't grow
+const CHARGE_TIME = 2; // seconds from min range (the red line) to max range
+const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the shortest shot can still reach the line
+const RELOAD_TIME = 0.5; // seconds after a shot during which a new press fires but its range doesn't grow
 const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
 const BLAST_TIME = 1.2, SINK_TIME = 2.5; // seconds
 const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
@@ -186,6 +187,12 @@ const seaAt = (x, y) => (ray.setFromCamera(new THREE.Vector2(x, y), camera), ray
 const spawnZ = seaAt(0, 1).z - 4;       // just above the top edge
 const laneX = seaAt(1, -1).x * 0.8;     // narrowest (bottom) width, so ships never drift off-screen
 const maxRange = muzzle.distanceTo(seaAt(0, 1));
+// Shortest shot along dir lands exactly on the red line (the line is straight, so this grows when aiming diagonally).
+const minRange = dir => Math.min((muzzle.z - lossZ) / -dir.z, maxRange);
+{ // self-check: straight and diagonal minimum shots both land on the line
+  for (const dir of [new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, -1).normalize()])
+    console.assert(Math.abs(muzzle.z + dir.z * minRange(dir) - lossZ) < 1e-9, 'minimum shot lands on the red line');
+}
 
 // --- input (mouse + touch via pointer events): aim at pointer, hold to charge range, release to fire ---
 const aimDir = new THREE.Vector3(0, 0, -1);
@@ -193,7 +200,9 @@ let charging = false, charge = 0;
 function aim(e) {
   const r = renderer.domElement.getBoundingClientRect();
   const p = seaAt((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
-  if (p) aimDir.subVectors(p, muzzle).setY(0).normalize();
+  if (!p) return;
+  aimDir.subVectors(p, muzzle).setY(0).normalize();
+  if (aimDir.z > MAX_AIM_Z) aimDir.set(Math.sign(aimDir.x) || 1, 0, 0).multiplyScalar(Math.sqrt(1 - MAX_AIM_Z ** 2)).setZ(MAX_AIM_Z);
 }
 addEventListener('pointermove', aim);
 let reload = 0;
@@ -206,7 +215,7 @@ addEventListener('pointerup', () => {
 });
 addEventListener('pointercancel', () => { charging = false; marker.visible = false; });
 addEventListener('contextmenu', e => e.preventDefault()); // long-press on mobile
-const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, MIN_RANGE + (maxRange - MIN_RANGE) * charge);
+const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, minRange(aimDir) + (maxRange - minRange(aimDir)) * charge);
 
 // --- game objects ---
 const shells = [], enemies = [], blasts = [], sinking = [];
