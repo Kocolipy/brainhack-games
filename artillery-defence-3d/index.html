@@ -183,9 +183,8 @@ for (let x = -40; x < 40; x += 2) {
 scene.add(dashes);
 
 // landing marker, shown while charging
-// a standing ring wall, since a flat ring on the water is near invisible from this low camera
-const marker = new THREE.Mesh(new THREE.CylinderGeometry(SPLASH, SPLASH, 2, 32, 1, true),
-  new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+const marker = new THREE.Mesh(new THREE.CircleGeometry(SPLASH, 32), new THREE.MeshBasicMaterial({ color: 0xffcc33 }));
+marker.rotation.x = -Math.PI / 2;
 marker.visible = false;
 scene.add(marker);
 
@@ -442,7 +441,7 @@ renderer.setAnimationLoop(() => {
 
   if (charging) {
     if (reload <= 0) charge = Math.min(charge + dt / CHARGE_TIME, 1); // range holds at minimum while reloading
-    landingPoint(marker.position).y = 1; // half the wall height, so it stands on the water
+    landingPoint(marker.position).y = 0.05;
     marker.visible = true;
   }
   bar.style.width = (charging ? charge * 100 : 0) + '%';
