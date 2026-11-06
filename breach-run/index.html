@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Breach Run</title>
+<style>
+  body { margin: 0; height: 100dvh; overflow: hidden; background: #050a12; font-family: ui-monospace, Menlo, Consolas, monospace;
+         touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; width: 100vw; height: 100dvh; }
+  .screen { display: none; position: absolute; inset: 0; color: #fff; flex-direction: column; align-items: center; justify-content: center;
+            gap: 10px; text-align: center; padding: 16px; box-sizing: border-box; }
+  .screen.show { display: flex; }
+  .screen h1 { margin: 0; font-size: clamp(26px, 8vmin, 52px); }
+  .screen p { margin: 0; font-size: 17px; line-height: 1.5; }
+  #start { background: rgba(5,10,18,0.9); }
+  #start h1 { color: #3f6; }
+  #over { background: rgba(40,0,0,0.8); }
+  #over h1 { color: #ff4444; }
+  #over.win { background: rgba(0,40,15,0.85); }
+  #over.win h1 { color: #3f6; }
+  button { margin-top: 10px; padding: 14px 28px; font: bold 18px ui-monospace, Menlo, Consolas, monospace; border: 0; border-radius: 10px;
+           background: #3f6; color: #032; }
+  .back { padding: 12px 26px; font: bold 18px ui-monospace, Menlo, Consolas, monospace; border: 2px solid #3f6; border-radius: 10px;
+          color: #3f6; text-decoration: none; }
+  #rotate { display: none; position: fixed; inset: 0; background: #111; color: #fff; font: bold 22px sans-serif;
+            align-items: center; justify-content: center; text-align: center; z-index: 9; }
+  @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="start" class="screen show">
+  <h1>BREACH RUN</h1>
+  <p>You are a virus. Slip past the defences and infect the server.</p>
+  <button id="go">START</button>
+</div>
+<div id="over" class="screen"><h1 id="title"></h1><p id="final"></p><button id="again">TRY AGAIN</button><a class="back" href="../">← BACK</a></div>
+<div id="rotate">↻<br>Rotate your device to landscape</div>
+<script src="../records.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d', { alpha: false });
+
+// world units: the play field is 1 tall (y = 0 floor, 1 ceiling); the virus moves right SPEED per s and up or down VY per s
+const SPEED = 0.6, VY = 0.75, R = 0.03, END = 30, FW = 0.1;  // FW = firewall thickness
+// art rendered in Blender (tools/make_sprites.py, tools/make_backdrop.py). Glow is baked once on load, never per frame:
+// each sprite is swapped for a canvas copy with its neon glow around it, and the firewall tile for a glowing strip of 11 tiles
+const GLOW = { virus: '#3f6', firewall: '#f40', fwcap: '#f50', honeypot: '#fa0', antivirus: '#39f', server: '#29f' };
+const PAD = 0.3;  // baked glow margin on every side, as a fraction of the sprite's width
+const SPR = {}, BG = new Image();
+BG.src = 'assets/backdrop.jpg';
+function bake(img, color, tiles = 1) {
+  const p = img.width * PAD, c = document.createElement('canvas'), g = c.getContext('2d');
+  c.width = img.width + 2 * p; c.height = tiles > 1 ? img.height * tiles : img.height + 2 * p;
+  g.shadowColor = color; g.shadowBlur = p * 0.6;
+  for (let pass = 0; pass < 3; pass++) {  // two glowing passes, then a crisp one so no tile's glow spills over its neighbour
+    if (pass === 2) g.shadowBlur = 0;
+    for (let i = 0; i < tiles; i++) g.drawImage(img, p, tiles > 1 ? i * img.height : p);
+  }
+  return c;
+}
+for (const n of Object.keys(GLOW)) {
+  const img = SPR[n] = new Image();
+  img.src = `assets/${n}.png`;
+  img.onload = () => {
+    SPR[n] = bake(img, GLOW[n], n === 'firewall' ? 11 : 1);
+    if (n !== 'server') return;
+    // the infected server: same rack recoloured virus green (black stays black), shown spreading from where the virus hit
+    const t = document.createElement('canvas'), g = t.getContext('2d');
+    t.width = img.width; t.height = img.height;
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = 'color'; g.fillStyle = '#3f6'; g.fillRect(0, 0, t.width, t.height);
+    g.globalCompositeOperation = 'destination-in'; g.drawImage(img, 0, 0);
+    SPR.serverHit = bake(t, '#3f6');
+  };
+}
+
+// the one map, by the second the virus reaches each obstacle:
+// fw = firewall from the bottom/top, gap = firewalls from both sides around a gap (centre, size),
+// hp = honeypot (y), av = antivirus scanner sweeping up and down (y, sweep, period in s)
+const MAP = [
+  // 0-5 s: open field while the instructions show; 5-10 s: easy single firewalls
+  ['fw', 5.5, 'b', 0.45], ['fw', 7, 't', 0.45], ['fw', 8.5, 'b', 0.5], ['hp', 9.6, 0.88],
+  // 10-20 s: gaps, honeypots and scanners
+  ['gap', 10.6, 0.4, 0.51], ['av', 11.8, 0.5, 0.3, 2.4], ['gap', 13, 0.65, 0.45], ['hp', 13.9, 0.35], ['fw', 13.9, 't', 0.35],
+  ['gap', 15, 0.3, 0.42], ['av', 16, 0.6, 0.25, 1.6], ['gap', 17, 0.7, 0.39], ['hp', 17.8, 0.45], ['gap', 18.6, 0.25, 0.39],
+  ['av', 19.5, 0.55, 0.3, 1.4],
+  // 20-30 s: tight zigzag
+  ['gap', 20.5, 0.65, 0.36], ['gap', 21.2, 0.4, 0.36], ['gap', 21.9, 0.65, 0.33], ['hp', 22.5, 0.5], ['gap', 23.1, 0.3, 0.33],
+  ['av', 23.8, 0.5, 0.35, 1.2], ['gap', 24.6, 0.75, 0.43], ['gap', 25.3, 0.45, 0.33], ['hp', 25.9, 0.78], ['hp', 25.9, 0.18],
+  ['gap', 27.1, 0.2, 0.33], ['gap', 27.7, 0.55, 0.3], ['gap', 29.2, 0.75, 0.43],
+  ['gap', 29.7, 0.5, 0.39],
+];
+const OBS = MAP.flatMap(([k, t, a, b, c]) => {
+  const x = t * SPEED, wall = (side, len) => ({ k: 'fw', x, side, y0: side === 'b' ? 0 : 1 - len, y1: side === 'b' ? len : 1 });
+  if (k === 'fw') return [wall(a, b)];
+  if (k === 'gap') return [wall('b', a - b / 2), wall('t', 1 - a - b / 2)];
+  if (k === 'hp') return [{ k, x, y: a, r: 0.06 }];
+  return [{ k, x, y: a, amp: b, period: c, r: 0.065 }];
+}).sort((a, b) => a.x - b.x);
+const obsY = (o, t) => o.k === 'av' ? o.y + o.amp * Math.sin(2 * Math.PI * t / o.period) : o.y;
+const near = x => OBS.filter(o => Math.abs(o.x - x) < 0.25);
+// does a virus of radius r at (x, y) at time t touch any of the obstacles in list?
+function hit(list, x, y, t, r) {
+  return list.some(o => {
+    if (o.k !== 'fw') return Math.hypot(o.x - x, obsY(o, t) - y) < r + o.r;
+    const dx = Math.max(o.x - FW / 2 - x, 0, x - o.x - FW / 2), dy = Math.max(o.y0 - y, 0, y - o.y1);
+    return dx * dx + dy * dy < r * r;
+  });
+}
+// one frame of movement: forward at SPEED, up or down at VY, sliding along the floor and ceiling
+const move = (y, dir, dt) => Math.min(1 - R, Math.max(R, y + dir * VY * dt));
+
+let S;  // game state
+const newState = () => ({ t: 0, y: 0.5, dir: -1, dead: 0, win: 0, over: false, trail: [] });
+function flip() { if (running && !S.dead && !S.win && !S.over) S.dir = -S.dir; }
+
+// the ending: the virus flies into the server rack (0-0.4 s), the infection spreads (0.4-1.8 s), then a flash and the end screen
+const SRV = END * SPEED + 0.25, HIT = 0.4, SPREAD = 1.4, WIN_ANIM = 2.6;  // SRV = world x of the rack's centre
+function virusPos() {
+  if (!S.win) return [S.t * SPEED, S.y];
+  const k = Math.min(1, S.win / HIT);  // carries on at about its running speed, easing to the rack's middle height
+  return [END * SPEED + (SRV - END * SPEED) * k, S.y + (0.5 - S.y) * (1 - (1 - k) ** 2)];
+}
+const pct = () => Math.floor(S.t / END * 100);  // how far along the map, as shown on the progress bar
+const infected = () => Math.min(1, Math.max(0, (S.win - HIT) / SPREAD));
+
+function update(dt) {
+  if (S.over) return;
+  if (S.dead) { if ((S.dead += dt) > 0.8) finish(false); return; }  // short burst before the end screen
+  if (S.win) {
+    S.win += dt;
+    S.trail.push(virusPos());  // the trail follows the virus in, then drains into the server
+    S.trail.shift();
+    if (S.win > WIN_ANIM) finish(true);
+    return;
+  }
+  S.t = Math.min(END, S.t + dt);
+  S.y = move(S.y, S.dir, dt);
+  S.trail.push([S.t * SPEED, S.y]);
+  if (S.trail.length > 90) S.trail.shift();
+  if (hit(near(S.t * SPEED), S.t * SPEED, S.y, S.t, R)) S.dead = 1e-6;
+  else if (S.t >= END) S.win = 1e-6;
+}
+
+function finish(won) {
+  S.over = true;
+  $('over').classList.add('show');
+  $('over').classList.toggle('win', won);
+  $('title').textContent = won ? 'ACCESS GRANTED' : 'VIRUS QUARANTINED';
+  $('final').textContent = won ? 'You slipped past every defence.' : `You got ${pct()}% of the way (${S.t.toFixed(1)} s).`;
+  // rating: completed on any finished run, stars at 50% / 75% / 100% of the way; personal best = furthest % of the way
+  const result = { completed: true, stars: records.stars(S.t, [END * 0.5, END * 0.75, END]) };
+  records.show($('final'), result, ['Reach 50%', 'Reach 75%', 'Reach 100%']);
+  records.save('breach-run', result, o => pct() > (o.pct ?? -1) ? { pct: pct() } : {});
+}
+
+// self-check: walls and pots collide, the floor is safe
+console.assert(hit(OBS, 5.5 * SPEED, 0.2, 0, R) && !hit(OBS, 5.5 * SPEED, 0.6, 0, R), 'first firewall blocks low, not high');
+console.assert(hit(OBS, 9.6 * SPEED, 0.88, 0, R) && !hit(OBS, 9.6 * SPEED, 0.7, 0, R), 'honeypot');
+S = newState(); S.t = END - 0.01; update(0.02);
+console.assert(S.win > 0 && !S.dead && !S.over, 'reaching the end starts the ending, not the end screen');
+S.win = HIT;
+console.assert(virusPos()[0] === SRV && virusPos()[1] === 0.5, 'the virus ends up inside the server rack');
+console.assert(move(R, -1, 1) === R && move(0.5, 1, 0.1) === 0.5 + VY * 0.1, 'slides on the floor');
+// ?check: search every frame-by-frame tap sequence to prove the map can be beaten with a little room to spare
+if (location.search === '?check') {
+  let states = new Map([['500,-1', [0.5, -1]]]), t = 0, dt = 1 / 60;
+  for (let f = 1; t < END && states.size; f++) {
+    t = f * dt;
+    const list = near(t * SPEED), next = new Map();
+    for (const [y, dir] of states.values()) for (const d of [dir, -dir]) {
+      const ny = move(y, d, dt);
+      if (!hit(list, t * SPEED, ny, t, R + 0.012)) next.set(Math.round(ny * 1000) + ',' + d, [ny, d]);
+    }
+    states = next;
+  }
+  console.assert(states.size, `map is not beatable: stuck at ${t.toFixed(2)} s`);
+  console.log(`map check: ${states.size ? 'beatable' : 'STUCK at ' + t.toFixed(2) + ' s'}`);
+}
+
+// layout: the field fills the screen height below a thin HUD; the virus sits 28% in from the left
+let W, H, dpr, U, TOP;
+function resize() {
+  dpr = Math.min(devicePixelRatio, 1.5);  // the art is soft glow; more pixels only cost frame rate on phones
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  TOP = Math.max(36, H * 0.08); U = H - TOP - 6;
+}
+addEventListener('resize', resize);
+resize();
+// the camera follows the virus but stops once the server is mid-screen; the virus flies on across the screen into it
+const camX = () => Math.min(S.t * SPEED, SRV - W * 0.22 / U);
+const sx = x => W * 0.28 + (x - camX()) * U, sy = y => TOP + (1 - y) * U;
+
+// draw sprite n into the box (x, y, w, h), its baked glow spilling outside the box
+function box(n, x, y, w, h) {
+  const p = SPR[n] instanceof HTMLCanvasElement ? PAD * w : 0;
+  ctx.drawImage(SPR[n], x - p, y - p, w + 2 * p, h + 2 * p);
+}
+function sprite(n, x, y, size, rot = 0) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  box(n, -size / 2, -size / 2, size, size);
+  ctx.restore();
+}
+
+function drawWall(o) {
+  const w = FW * U, len = (o.y1 - o.y0 - 0.05) * U, strip = SPR.firewall;  // the last 0.05 is the emitter cap
+  ctx.save();
+  ctx.translate(sx(o.x) - w / 2, o.side === 'b' ? sy(0) : sy(1));
+  if (o.side === 'b') ctx.scale(1, -1);  // draw every wall growing downwards from its base
+  if (strip instanceof HTMLCanvasElement) {  // the baked strip: 256 px of tile per wall width, plus glow at the sides
+    const p = PAD * w;
+    ctx.drawImage(strip, 0, 0, strip.width, 256 * len / w, -p, 0, w + 2 * p, len);
+  }
+  // emitter cap: base on the wall end, core facing away from it
+  const c = w * 1.13;
+  ctx.translate(w / 2, len - 0.02 * U);
+  ctx.scale(1, -1);
+  box('fwcap', -c / 2, -c * 0.94, c, c);
+  ctx.restore();
+}
+
+// cyberspace backdrop: one pre-rendered picture, panned slowly so it sits far behind the action
+function backdrop() {
+  const pan = END * SPEED * U * 0.04, k = Math.max(H / BG.height, (W + pan) / BG.width) || 1;
+  ctx.fillStyle = '#02040c'; ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 0.35;  // faded well back so it never competes with the defences
+  if (BG.complete) ctx.drawImage(BG, -S.t * SPEED * U * 0.04, H - BG.height * k, BG.width * k, BG.height * k);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(60,200,255,0.25)';  // floor and ceiling: a wide faint line under a thin bright one
+  for (const lw of [6, 2]) {
+    ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(0, sy(0)); ctx.lineTo(W, sy(0)); ctx.moveTo(0, sy(1)); ctx.lineTo(W, sy(1)); ctx.stroke();
+    ctx.strokeStyle = '#3cf';
+  }
+}
+
+// the server, and once the virus is in, the infection: green spreading from the impact, glitching slices, rising bits
+function drawServer(l, sw, sec) {
+  const p = infected(), shake = p > 0 && p < 1 ? (Math.random() - 0.5) * U * 0.015 : 0, x = l + shake;
+  box('server', x, TOP, sw, U);
+  if (!S.win || !SPR.serverHit) return;
+  const cx = sx(SRV), cy = sy(0.5), c = SPR.serverHit, pad = PAD * sw, k = c.height / (U + 2 * pad);
+  if (S.win > HIT) {  // shockwave from the impact
+    const a = Math.max(0, 1 - (S.win - HIT) / 0.6);
+    ctx.strokeStyle = `rgba(80,255,140,${a})`; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(cx, cy, U * 0.05 + (S.win - HIT) * U * 0.8, 0, 7); ctx.stroke();
+  }
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, p * U * 0.75, 0, 7); ctx.clip();
+  box('serverHit', x, TOP, sw, U);
+  ctx.restore();
+  if (p > 0 && p < 1) for (let i = 0; i < 4; i++) if (Math.random() < 0.5) {  // glitch: slices of the infected rack jump sideways
+    const h = U * (0.02 + Math.random() * 0.05), y = TOP + Math.random() * (U - h);
+    ctx.drawImage(c, 0, (y - TOP + pad) * k, c.width, h * k, x - pad + (Math.random() - 0.5) * sw * 0.3, y, sw + 2 * pad, h);
+  }
+  ctx.fillStyle = `rgba(80,255,140,${Math.min(1, p * 3)})`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(U * 0.035)}px ui-monospace, monospace`;
+  for (let i = 0; i < 16; i++) {  // 0s and 1s streaming up out of the rack
+    const bx = x + sw * (0.15 + 0.7 * ((i * 0.618) % 1)), by = TOP + U * (1 - ((sec * 0.5 + i * 0.37) % 1));
+    ctx.fillText((i * 7 + Math.floor(sec * 6)) % 2 ? '1' : '0', bx, by);
+  }
+}
+
+function draw(now) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const sec = now / 1000;
+  backdrop();
+
+  // the server at the end of the map, then the defences in view
+  const srvL = sx(END * SPEED), sw = U * 0.5;
+  if (srvL < W + U) drawServer(srvL, sw, sec);
+  const t = S.t;
+  for (const o of OBS) {
+    const x = sx(o.x);
+    if (x < -U * 0.2 || x > W + U * 0.2) continue;
+    if (o.k === 'fw') drawWall(o);
+    else if (o.k === 'hp') sprite('honeypot', x, sy(o.y), o.r * 2.6 * U, Math.sin(sec * 2 + o.x) * 0.15);
+    else sprite('antivirus', x, sy(obsY(o, t)), o.r * 2.6 * U * (1 + 0.05 * Math.sin(sec * 5)));  // gently pulsing shield
+  }
+
+  // the virus and its fading neon trail
+  if (S.trail.length > 1) {
+    const [ax, ay] = S.trail[0], [bx, by] = S.trail.at(-1), g = ctx.createLinearGradient(sx(ax), sy(ay), sx(bx), sy(by));
+    g.addColorStop(0, 'rgba(60,255,120,0)'); g.addColorStop(1, 'rgba(60,255,120,0.7)');
+    ctx.beginPath();
+    S.trail.forEach(([x, y], i) => i ? ctx.lineTo(sx(x), sy(y)) : ctx.moveTo(sx(x), sy(y)));
+    ctx.strokeStyle = g; ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.3; ctx.lineWidth = R * U * 1.4; ctx.stroke();  // faint wide pass for the glow, then the bright core
+    ctx.globalAlpha = 1; ctx.lineWidth = R * U * 0.5; ctx.stroke();
+  }
+  const [vx, vy] = virusPos(), px = sx(vx), py = sy(vy);
+  if (S.dead) {  // quarantined: expanding burst and flying shards
+    const a = Math.max(0, 1 - S.dead);
+    ctx.strokeStyle = `rgba(255,70,70,${a})`; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(px, py, R * U * (1 + S.dead * 6), 0, 7); ctx.stroke();
+    ctx.fillStyle = `rgba(60,255,120,${a})`;
+    for (let i = 0; i < 12; i++) {
+      const ang = i * 0.52 + 0.3, d = S.dead * U * 0.35;
+      ctx.fillRect(px + Math.cos(ang) * d - 3, py + Math.sin(ang) * d - 3, 6, 6);
+    }
+  } else if (S.win < HIT + 0.25) {  // drawn a little larger than its hitbox; shrinks away once inside the server
+    sprite('virus', px, py, R * 3.2 * U * Math.min(1, (HIT + 0.25 - S.win) / 0.25), sec * 4);
+  }
+  if (S.win > HIT + SPREAD && S.win < HIT + SPREAD + 0.6) {  // flash as the infection completes
+    ctx.fillStyle = `rgba(80,255,140,${0.5 * (1 - (S.win - HIT - SPREAD) / 0.6)})`; ctx.fillRect(0, 0, W, H);
+  }
+
+  // HUD: progress to the server and time
+  const bw = Math.min(W * 0.5, 420), bx = (W - bw) / 2, by = TOP / 2 - 6;
+  ctx.fillStyle = '#0c1a2a'; ctx.fillRect(bx, by, bw, 12);
+  ctx.fillStyle = '#3f6'; ctx.fillRect(bx, by, bw * S.t / END, 12);
+  ctx.fillStyle = '#cfe'; ctx.font = 'bold 14px ui-monospace, monospace'; ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right'; ctx.fillText(`${pct()}%`, bx - 10, by + 6);
+  ctx.textAlign = 'left'; ctx.fillText(`${S.t.toFixed(1)} s`, bx + bw + 10, by + 6);
+
+  // instructions for the first 5 s, fading out over the last half second
+  if (running && S.t < 5) {
+    ctx.globalAlpha = Math.min(1, (5 - S.t) * 2);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.min(W * 0.05, 40)}px ui-monospace, monospace`;
+    ctx.fillText(matchMedia('(pointer: coarse)').matches ? 'TAP to change direction' : 'CLICK or SPACE to change direction', W / 2, TOP + U * 0.3);
+    ctx.font = `${Math.min(W * 0.025, 18)}px ui-monospace, monospace`; ctx.fillStyle = '#9bd';
+    ctx.fillText('Dodge the firewalls, honeypots and antivirus scanners', W / 2, TOP + U * 0.3 + 40);
+    ctx.globalAlpha = 1;
+  }
+}
+
+cv.addEventListener('pointerdown', flip);
+addEventListener('keydown', e => { if (!e.repeat && [' ', 'ArrowUp', 'ArrowDown', 'w', 's'].includes(e.key)) { e.preventDefault(); flip(); } });
+addEventListener('contextmenu', e => e.preventDefault());
+// any click or tap goes fullscreen (again, if the player left it); pointerup because browsers only allow it once a touch lifts; not supported on iPhone Safari
+addEventListener('pointerup', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+});
+
+let running = false;
+const portrait = matchMedia('(orientation: portrait) and (pointer: coarse)');  // paused while the rotate prompt shows
+function start() {
+  S = newState(); running = true;
+  $('start').classList.remove('show'); $('over').classList.remove('show');
+}
+$('go').onclick = start;
+$('again').onclick = start;
+S = newState();
+
+let last = performance.now();
+(function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (running && !portrait.matches) update(dt);
+  draw(now);
+  requestAnimationFrame(loop);
+})(last);
+</script>
+</body>
+</html>
