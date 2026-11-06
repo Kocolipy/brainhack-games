@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Artillery Defence 3D</title>
+<style>
+  body { margin: 0; height: 100dvh; overflow: hidden; background: #000; font-family: sans-serif;
+         display: flex; align-items: center; justify-content: center;
+         touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  /* fixed 16:9 landscape play area, letterboxed on any screen */
+  #game { position: relative; width: min(100vw, 100dvh * 16 / 9); height: min(100dvh, 100vw * 9 / 16); }
+  canvas { display: block; }
+  #hud { position: absolute; top: 10px; left: 10px; right: 10px; color: #fff; font-size: 16px; pointer-events: none; }
+  #hp { font-size: 28px; color: #e33; letter-spacing: 4px; }
+  #power { position: absolute; bottom: 4%; left: 50%; width: 40%; height: 12px;
+           transform: translateX(-50%); border: 2px solid #fff; pointer-events: none; }
+  #bar { height: 100%; width: 0; background: #fc3; }
+  #boss { position: absolute; top: 80px; left: 10%; width: 80%; color: #fc8; font: bold 14px sans-serif;
+          text-align: center; letter-spacing: 3px; pointer-events: none; display: none; }
+  #bossbar { height: 10px; margin-top: 4px; border: 2px solid #fc8; }
+  #bossfill { height: 100%; width: 100%; background: #e60; transition: width 0.15s; }
+  /* full-width announcement band: .danger (boss arrival) or .over (game over) */
+  #banner { position: absolute; top: 38%; left: 0; right: 0; padding: 14px 0; text-align: center; color: #fff;
+            background: rgba(0, 0, 0, 0.65); pointer-events: none; display: none; }
+  #banner b { display: block; font: 900 clamp(32px, 12vw, 56px) sans-serif; letter-spacing: 4px; }
+  #banner span { display: block; margin-top: 4px; font: bold 15px sans-serif; letter-spacing: 3px; }
+  #restart, #back { display: none; width: fit-content; margin: 14px auto 2px; text-decoration: none; padding: 12px 32px; font: bold 18px sans-serif; letter-spacing: 3px;
+             color: var(--accent); background: rgba(255, 255, 255, 0.06); border: 2px solid var(--accent);
+             border-radius: 4px; cursor: pointer; pointer-events: auto; }
+  #restart:active, #back:active { color: #0a1a28; background: var(--accent); }
+  #banner.over :is(#restart, #back), #banner.win :is(#restart, #back) { display: block; }
+  #back { margin-top: 8px; }
+  #banner.danger { border-block: 8px solid; border-image: repeating-linear-gradient(-45deg, #fc0 0 14px, #111 14px 28px) 8; }
+  #banner.danger b { color: #f33; animation: blink 0.5s steps(1) infinite; }
+  #banner.over { --accent: #f44; }
+  #banner.over b { color: var(--accent); }
+  #banner.win { border-block: 4px solid #fc4; }
+  #banner.win { --accent: #fd4; }
+  #banner.win b { color: var(--accent); }
+  #banner.flawless b { font-size: clamp(24px, 8vw, 40px); text-shadow: 0 0 12px #fd4; }
+  #game.bossfight #hud { display: none; }
+  #game.bossfight #boss { top: 14px; }
+  @keyframes blink { 50% { opacity: 0.25; } }
+  /* phones/tablets held upright: black out and pause (desktop windows are exempt) */
+  #rotate { position: fixed; inset: 0; z-index: 10; background: #000; color: #666; display: none;
+            align-items: center; justify-content: center; font: bold 16px sans-serif; letter-spacing: 2px; }
+  body.sideways #rotate { display: flex; }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="hud"><div id="hp"></div><div id="text"></div></div>
+  <div id="boss">LEVIATHAN<div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="banner"><b></b><span></span><button id="restart">RESTART</button><a id="back" href="../">← BACK</a></div>
+  <div id="power"><div id="bar"></div></div>
+</div>
+<div id="rotate">ROTATE TO LANDSCAPE</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="../records.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// --- tuning ---
+const CHARGE_TIME = 2; // seconds from min range (the red line) to max range
+const MAX_AIM_Z = -0.2; // aim must point at least this far up-screen, so the shortest shot can still reach the line
+const RELOAD_TIME = 0.2; // seconds after a shot: a press is accepted, but releasing within this window fires nothing
+const SHELL_SPEED = 40, SPLASH = 3, LANE_SPEED = 6, GAP = 1, SPAWN_EVERY = 2.5, MAX_HP = 3;
+const BLAST_TIME = 1.2, SINK_TIME = 1.25, RIPPLE_TIME = 1.2; // seconds
+const COMPLETE_SUNK = 10, STAR_SUNK = 20; // ships sunk in one run for the COMPLETED tag / the first star
+const CAM_HEIGHT = 7, CAM_BACK = 12, SPAWN_Z = -80; // camera above/behind the turret; ships appear this far out
+const PLAYER_Z = 27, LOSS_GAP = 6; // player hull centre; loss line sits this far in front of the hull (> largest ship half-length, so a ship half past the line never touches the hull)
+// enemy classes (models in assets/, built by tools/make_assets.py); smaller = faster
+const ENEMY_TYPES = [{ file: 'enemy_small', speed: 14 }, { file: 'enemy_medium', speed: 11.7 }, { file: 'enemy_large', speed: 9 }];
+// final boss: arrives after TOTAL_SHIPS have spawned; ships stop spawning
+const WARMUP_SHIPS = 10, WARMUP_SPEED = 0.7; // the first ships sail slower to ease the player in
+const TOTAL_SHIPS = 20, BOSS_HP = 8, BOSS_WIDTH = 0.3; // BOSS_WIDTH = fraction of the lane width
+const BOSS_SPEED = 5, LUNGE_SPEED = 30, LUNGE_TIME = 0.4, LUNGE_EVERY = 2.25, DODGE_COOLDOWN = 2.25; // units/s, seconds
+const FINAL_CHARGE_DIST = 20; // boss midpoint this close to the red line: it stops weaving and charges straight at it
+
+// Shell arc: straight line on the sea, parabola in height; lands exactly at `to` when t = 1.
+function arc(from, to, t, out) {
+  out.lerpVectors(from, to, t);
+  out.y = 4 * (from.distanceTo(to) * 0.3) * t * (1 - t);
+  return out;
+}
+// Blast circle vs the ship's full rectangle (ships never rotate, so axis-aligned).
+function blastHits(at, pos, halfW, halfD) {
+  const dx = Math.max(Math.abs(pos.x - at.x) - halfW, 0), dz = Math.max(Math.abs(pos.z - at.z) - halfD, 0);
+  return Math.hypot(dx, dz) < SPLASH;
+}
+// Would a ship rectangle at (x, z) come within GAP of enemy e?
+function overlaps(x, z, halfW, halfD, e) {
+  const p = e.mesh.position;
+  return Math.abs(x - p.x) < halfW + e.halfW + GAP && Math.abs(z - p.z) < halfD + e.halfD + GAP;
+}
+// Sideways lunge direction (+1/-1): away from the threat, unless that would leave the field.
+function dodgeDir(x, threatX, limit, reach) {
+  let dir = Math.sign(x - threatX) || (Math.random() < 0.5 ? -1 : 1);
+  if (Math.abs(x + dir * reach) > limit) dir = -dir;
+  return dir;
+}
+{ // self-checks
+  console.assert(dodgeDir(0, 1, 10, 3) === -1, 'dodge away from a shell landing to the right');
+  console.assert(dodgeDir(9, 8, 10, 3) === -1, 'at the right edge, dodge back left even if the shell is left');
+  const other = { mesh: { position: { x: 0, z: 0 } }, halfW: 1, halfD: 3 };
+  console.assert(overlaps(0, 5.5, 1, 2, other), 'ships nose to tail within gap overlap');
+  console.assert(!overlaps(0, 7, 1, 2, other), 'ships one gap apart do not');
+  console.assert(!overlaps(3, 0, 1, 1, other), 'side by side with a gap do not');
+  const a = new THREE.Vector3(0, 0, 0), b = new THREE.Vector3(3, 0, -40), p = new THREE.Vector3();
+  console.assert(arc(a, b, 0, p).equals(a), 'arc start');
+  console.assert(arc(a, b, 1, p).distanceTo(b) < 1e-9, 'arc landing');
+  console.assert(arc(a, b, 0.5, p).y > 0, 'arc height');
+  const ship = new THREE.Vector3(0, 0, 0);
+  console.assert(blastHits(new THREE.Vector3(0, 0, 9), ship, 1, 8), 'hit on the stern of a long ship');
+  console.assert(!blastHits(new THREE.Vector3(0, 0, 12), ship, 1, 8), 'miss past the stern');
+  console.assert(!blastHits(new THREE.Vector3(4.5, 0, 0), ship, 1, 8), 'miss beside the hull');
+}
+
+// --- scene ---
+const ASPECT = 16 / 9, gameEl = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+gameEl.prepend(renderer.domElement);
+const fit = () => renderer.setSize(gameEl.clientWidth, gameEl.clientHeight);
+fit();
+addEventListener('resize', fit);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b5d8);
+scene.fog = new THREE.Fog(0x87b5d8, 50, 130); // haze, so ships rise out of the horizon instead of popping in
+const camera = new THREE.PerspectiveCamera(45, ASPECT, 0.1, 500);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x335577, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(10, 30, 10);
+scene.add(sun);
+
+const sea = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshLambertMaterial({ color: 0x1e5a8a }));
+sea.rotation.x = -Math.PI / 2;
+scene.add(sea);
+
+// --- assets (glTF needs http://, not file://) ---
+const text = document.getElementById('text');
+const load = name => new GLTFLoader().loadAsync(`../artillery-defence/assets/${name}.glb`).then(g => g.scene);
+const [player, shellModel, blastModel, bossModel, ...enemyModels] = await Promise.all(
+  ['player', 'shell', 'explosion', 'kaiju', ...ENEMY_TYPES.map(t => t.file)].map(load)
+).catch(err => {
+  text.textContent = 'Could not load assets. Serve the repo root over http (e.g. python3 -m http.server).';
+  throw err;
+});
+ENEMY_TYPES.forEach((t, i) => {
+  const size = new THREE.Box3().setFromObject(t.model = enemyModels[i]).getSize(new THREE.Vector3());
+  Object.assign(t, { halfW: size.x / 2, halfD: size.z / 2, height: size.y });
+});
+
+// player frigate lying broadside, bow to screen-right; its "Turret" node is rotated to aim
+player.position.z = PLAYER_Z;
+player.rotation.y = -Math.PI / 2;
+scene.add(player);
+player.updateMatrixWorld(true);
+const turret = player.getObjectByName('Turret');
+const muzzle = turret.getWorldPosition(new THREE.Vector3()).setY(0);
+const lossZ = new THREE.Box3().setFromObject(player).min.z - LOSS_GAP; // an enemy whose midpoint passes this costs a heart
+// camera low behind (south of) the turret, looking out to sea over the gun
+camera.position.set(muzzle.x, CAM_HEIGHT, muzzle.z + CAM_BACK);
+camera.lookAt(muzzle.x, 0, muzzle.z - 30);
+camera.updateMatrixWorld(); // needed before raycasting, which happens before the first render
+
+// dashed loss line across the whole field (meshes, since WebGL lines are always 1px thin)
+const dashes = new THREE.Group(), dashMat = new THREE.MeshBasicMaterial({ color: 0xff5544, transparent: true, opacity: 0.8 });
+for (let x = -40; x < 40; x += 2) {
+  const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.3), dashMat);
+  dash.rotation.x = -Math.PI / 2;
+  dash.position.set(x + 1, 0.05, lossZ);
+  dashes.add(dash);
+}
+scene.add(dashes);
+
+// landing marker, shown while charging
+// a standing ring wall, since a flat ring on the water is near invisible from this low camera
+const marker = new THREE.Mesh(new THREE.CylinderGeometry(SPLASH, SPLASH, 2, 32, 1, true),
+  new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+marker.visible = false;
+scene.add(marker);
+
+// --- screen (NDC) → point on the sea plane y = 0 ---
+const ray = new THREE.Raycaster(), seaPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const seaAt = (x, y) => (ray.setFromCamera(new THREE.Vector2(x, y), camera), ray.ray.intersectPlane(seaPlane, new THREE.Vector3()));
+const spawnZ = SPAWN_Z;
+const laneX = seaAt(1, new THREE.Vector3(0, 0, lossZ).project(camera).y).x * 0.8; // view width at the loss line (the narrowest), so ships never drift off-screen
+const maxRange = muzzle.z - spawnZ;
+// Shortest shot along dir lands exactly on the red line (the line is straight, so this grows when aiming diagonally).
+const minRange = dir => Math.min((muzzle.z - lossZ) / -dir.z, maxRange);
+{ // self-check: straight and diagonal minimum shots both land on the line
+  for (const dir of [new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, -1).normalize()])
+    console.assert(Math.abs(muzzle.z + dir.z * minRange(dir) - lossZ) < 1e-9, 'minimum shot lands on the red line');
+}
+
+// --- input (mouse + touch via pointer events): aim at pointer, hold to charge range, release to fire ---
+const aimDir = new THREE.Vector3(0, 0, -1);
+let charging = false, charge = 0;
+function aim(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  // pointing at the sky aims along the ray's far end, so the turret still follows the pointer
+  const p = seaAt((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1) ?? ray.ray.at(1000, new THREE.Vector3());
+  aimDir.subVectors(p, muzzle).setY(0).normalize();
+  if (aimDir.z > MAX_AIM_Z) aimDir.set(Math.sign(aimDir.x) || 1, 0, 0).multiplyScalar(Math.sqrt(1 - MAX_AIM_Z ** 2)).setZ(MAX_AIM_Z);
+}
+addEventListener('pointermove', aim);
+let reload = 0;
+addEventListener('pointerdown', e => { if (paused.matches) return; aim(e); if (hp > 0) { charging = true; charge = 0; } });
+// Touch devices: go fullscreen on the first tap (hides the address bar on Android; iPhones don't support it).
+// Requested on release, since browsers only count a lifted finger as a tap for this.
+addEventListener('pointerup', () => {
+  if (touch && !document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+});
+addEventListener('pointerup', () => {
+  if (!charging) return;
+  charging = false;
+  marker.visible = false;
+  if (reload > 0) return; // released too soon after the last shot: no shell
+  fire(landingPoint(new THREE.Vector3()));
+});
+addEventListener('pointercancel', () => { charging = false; marker.visible = false; });
+addEventListener('contextmenu', e => e.preventDefault()); // long-press on mobile
+const landingPoint = out => out.copy(muzzle).addScaledVector(aimDir, minRange(aimDir) + (maxRange - minRange(aimDir)) * charge);
+
+// --- game objects ---
+const shells = [], enemies = [], blasts = [], sinking = [], ripples = [];
+let hp = MAX_HP, score = 0, spawnTimer = 0, spawned = 0, boss = null, won = false;
+const practice = new URLSearchParams(location.search).has('boss');
+if (practice) spawned = TOTAL_SHIPS; // index.html?boss skips straight to the boss
+// this run's rating: completed = COMPLETE_SUNK ships sunk; 1 star = STAR_SUNK ships sunk, 2 = Leviathan sunk, 3 = flawless victory
+const rating = () => ({ completed: score >= COMPLETE_SUNK, stars: won ? (hp === MAX_HP ? 3 : 2) : score >= STAR_SUNK ? 1 : 0 });
+const GOALS = [`Sink ${STAR_SUNK} ships`, 'Sink the Leviathan', 'Sink the Leviathan without losing a heart'];
+// personal best for the landing page (?boss practice runs are not recorded); sunk = most ships sunk in one run
+const record = (r, sunk = 0) => practice || records.save('artillery-defence-3d', r, o => ({ sunk: Math.max(o.sunk ?? 0, sunk) }));
+// announcement banner (.danger / .over / .win); ms = auto-hide delay, omit to keep it up
+const bannerEl = document.getElementById('banner');
+// shortcut: restart = page reload (assets come from the browser cache), swap for an in-place reset if reloads feel slow
+document.getElementById('restart').addEventListener('click', () => location.reload());
+let bannerTimer, overShown = false;
+function showBanner(title, sub, kind, ms) {
+  clearTimeout(bannerTimer); // a newer banner (e.g. game over) must not be hidden by an older timer
+  bannerEl.className = kind;
+  bannerEl.querySelector('b').textContent = title;
+  bannerEl.querySelector('span').textContent = sub;
+  bannerEl.style.display = 'block';
+  if (ms) bannerTimer = setTimeout(() => bannerEl.style.display = 'none', ms);
+}
+const hpEl = document.getElementById('hp');
+const drawHp = () => hpEl.textContent = '♥'.repeat(hp) + '♡'.repeat(MAX_HP - hp);
+drawHp();
+
+function fire(target) {
+  reload = RELOAD_TIME;
+  const mesh = shellModel.clone();
+  mesh.scale.setScalar(1.5); // real 76mm rounds would be invisible at this scale
+  scene.add(mesh);
+  shells.push({ mesh, from: muzzle.clone(), to: target, t: 0, dur: muzzle.distanceTo(target) / SHELL_SPEED });
+}
+
+function spawnEnemy() {
+  const type = ENEMY_TYPES[Math.floor(Math.random() * ENEMY_TYPES.length)], s = 0.9 + Math.random() * 0.2;
+  const halfW = type.halfW * s, halfD = type.halfD * s, z = spawnZ - halfD;
+  let x, tries = 10;
+  do x = (Math.random() * 2 - 1) * laneX;
+  while (enemies.some(e => overlaps(x, z, halfW, halfD, e)) && --tries);
+  if (!tries) return false; // no free spot at the top yet, try again next frame
+  const mesh = type.model.clone();
+  mesh.scale.setScalar(s);
+  mesh.position.set(x, 0, z);
+  scene.add(mesh);
+  enemies.push({ mesh, halfW, halfD, height: type.height * s, tx: x, speed: type.speed * (0.8 + Math.random() * 0.4) * (spawned < WARMUP_SHIPS ? WARMUP_SPEED : 1) });
+  return true;
+}
+
+// Lane to overtake blocker o: just clear of it, inside the field, with the sideways path free of other ships.
+// Tries the side needing the shorter sideways move first; the far side is only a fallback.
+function pickLane(e, o, ships) {
+  const p = e.mesh.position, clear = e.halfW + o.halfW + GAP + 0.1;
+  const near = Math.sign(p.x - o.mesh.position.x) || (Math.random() < 0.5 ? -1 : 1);
+  for (const side of [near, -near]) {
+    const tx = o.mesh.position.x + side * clear;
+    // halfD - 0.1: the blocker sits exactly GAP ahead, don't count that as touching
+    if (Math.abs(tx) <= laneX && !ships.some(f => f !== e && overlaps((p.x + tx) / 2, p.z, Math.abs(tx - p.x) / 2 + e.halfW, e.halfD - 0.1, f))) return tx;
+  }
+  return null;
+}
+{ // self-check: overtakes around a blocker, but not into a ship alongside
+  const ship = (x, z) => ({ mesh: { position: { x, z } }, halfW: 1, halfD: 2 });
+  const me = ship(0, 0), blocker = ship(0, 5);
+  console.assert(Math.abs(Math.abs(pickLane(me, blocker, [me, blocker])) - 3.1) < 1e-9, 'overtake beside blocker');
+  console.assert(pickLane(me, blocker, [me, blocker, ship(3.1, 0), ship(-3.1, 0)]) === null, 'both sides taken');
+  const leftish = ship(-0.5, 0);
+  console.assert(pickLane(leftish, blocker, [leftish, blocker]) === -3.1, 'takes the nearer (left) side');
+  console.assert(pickLane(leftish, blocker, [leftish, blocker, ship(-3.6, 0)]) === 3.1, 'falls back to the far side when near is taken');
+}
+
+// Fireball + smoke from assets/explosion.glb; each blast gets its own materials so it can fade.
+function spawnBlast(at, size) {
+  const mesh = blastModel.clone();
+  mesh.traverse(o => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.depthWrite = false; } });
+  mesh.position.copy(at);
+  scene.add(mesh);
+  blasts.push({ mesh, size, t: 0, fire: mesh.getObjectByName('Fireball'), smoke: mesh.getObjectByName('Smoke') });
+}
+
+const clamp01 = x => Math.min(Math.max(x, 0), 1);
+// Missed shell: rings spread out across the water and fade (RIPPLE_RINGS rings, each starting a little later).
+const RIPPLE_RINGS = 3, rippleGeo = new THREE.RingGeometry(0.85, 1, 48);
+const rippleMat = new THREE.MeshBasicMaterial({ color: 0xdff4ff, transparent: true, depthWrite: false });
+function spawnRipple(at) {
+  const rings = Array.from({ length: RIPPLE_RINGS }, () => {
+    const m = new THREE.Mesh(rippleGeo, rippleMat.clone());
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(at.x, 0.06, at.z);
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+  ripples.push({ rings, t: 0 });
+}
+
+// ships sunk by a shell, and ships that reach the dotted line (they cost a heart but still count as sunk)
+function addSunk() {
+  score++;
+  if (score === COMPLETE_SUNK || score === STAR_SUNK) record(rating()); // saved as it happens
+}
+
+// shells blow up only on a hit; a miss just ripples the water
+function explode(at) {
+  let hit = false;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!blastHits(at, e.mesh.position, e.halfW, e.halfD)) continue;
+    enemies.splice(i, 1);
+    hit = true;
+    addSunk();
+    spawnBlast(e.mesh.position, e.halfD); // secondary explosion on the ship itself
+    sinking.push({ ...e, t: 0, roll: (Math.random() < 0.5 ? -1 : 1) * (0.3 + Math.random() * 0.3) });
+  }
+  if (boss && hp > 0 && blastHits(at, boss.mesh.position, boss.halfW, boss.halfD)) { // no win from shells still in the air after a loss
+    hit = true;
+    boss.hp--;
+    boss.flash = 0.15;
+    bossFill.style.width = boss.hp / BOSS_HP * 100 + '%';
+    if (boss.hp === 0) {
+      const p = boss.mesh.position;
+      for (const dx of [-1, 0, 1]) spawnBlast(new THREE.Vector3(p.x + dx * boss.halfW * 0.6, 0, p.z + dx * 2), boss.halfW);
+      sinking.push({ mesh: boss.mesh, height: boss.height, speed: 0, t: 0, roll: 0.4 });
+      setBossFlash(boss, false);
+      boss = null;
+      won = true;
+      const result = rating();
+      record(result, score);
+      if (hp === MAX_HP) showBanner('FLAWLESS VICTORY!', `NO HEARTS LOST · SUNK ${score}`, 'win flawless');
+      else showBanner('VICTORY!', `LEVIATHAN DEFEATED · SUNK ${score}`, 'win');
+      records.show(bannerEl.querySelector('span'), result, GOALS);
+      bossEl.style.display = 'none';
+    }
+  }
+  if (hit) spawnBlast(at, SPLASH); else spawnRipple(at);
+}
+
+// --- boss ---
+const bossEl = document.getElementById('boss'), bossFill = document.getElementById('bossfill');
+const bossMats = [];
+bossModel.traverse(o => o.material && bossMats.push({ m: o.material, e: o.material.emissive.clone() }));
+const setBossFlash = (b, on) => bossMats.forEach(({ m, e }) => on ? m.emissive.setRGB(1, 0.1, 0.05) : m.emissive.copy(e));
+
+function spawnBoss() {
+  const mesh = bossModel; // only one boss, so the loaded model is used directly
+  const width = laneX * 2 * BOSS_WIDTH;
+  mesh.scale.setScalar(width / new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).x);
+  const size = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
+  mesh.position.set(0, 0, spawnZ - size.z / 2);
+  scene.add(mesh);
+  // shortcut: hitbox stays axis-aligned while the boss yaws into lunges, use an oriented box if hits feel off
+  boss = { mesh, hp: BOSS_HP, halfW: size.x / 2, halfD: size.z / 2, height: size.y, drift: 0, wanderT: 0,
+           lungeT: 0, lunge: new THREE.Vector3(), nextLunge: LUNGE_EVERY, cooldown: 0, flash: 0, age: 0 };
+  bossFill.style.width = '100%';
+  bossEl.style.display = 'block';
+  showBanner('DANGER!', 'LEVIATHAN APPROACHING', 'danger', 3000);
+  gameEl.classList.add('bossfight'); // hearts and counters make way for the boss bar
+}
+
+function startLunge(b, sideways, threatX) {
+  const reach = LUNGE_SPEED * LUNGE_TIME;
+  if (sideways) b.lunge.set(dodgeDir(b.mesh.position.x, threatX, laneX, reach) * LUNGE_SPEED, 0, BOSS_SPEED * 0.5);
+  else b.lunge.set(0, 0, LUNGE_SPEED);
+  b.lungeT = LUNGE_TIME;
+  b.nextLunge = LUNGE_EVERY + Math.random() * 2.25;
+  b.cooldown = DODGE_COOLDOWN;
+}
+
+// Swims down at BOSS_SPEED with a wandering sideways drift; lunges periodically, or early to dodge a shell about to land on it.
+const bossVel = new THREE.Vector3();
+function updateBoss(b, dt) {
+  const p = b.mesh.position;
+  b.age += dt; b.cooldown -= dt; b.nextLunge -= dt;
+  if (lossZ - p.z < FINAL_CHARGE_DIST) b.finalCharge = true; // close in: no more standing still to be burst down
+  if (b.finalCharge) {
+    bossVel.set(0, 0, LUNGE_SPEED);
+  } else if (b.lungeT > 0) {
+    b.lungeT -= dt;
+    bossVel.copy(b.lunge);
+  } else {
+    if ((b.wanderT -= dt) <= 0) { b.drift = Math.random() * 2 - 1; b.wanderT = 1 + Math.random() * 1.5; }
+    bossVel.set(b.drift, 0, 1).setLength(BOSS_SPEED);
+    const threat = shells.find(s => (1 - s.t) * s.dur < 0.8 && blastHits(s.to, p, b.halfW, b.halfD));
+    if (threat && b.cooldown <= 0) startLunge(b, true, threat.to.x);
+    else if (b.nextLunge <= 0) startLunge(b, Math.random() < 0.6, p.x + (Math.random() - 0.5));
+  }
+  p.addScaledVector(bossVel, dt);
+  if (Math.abs(p.x) > laneX) { p.x = Math.sign(p.x) * laneX; b.drift = -b.drift; }
+  // lean toward where it's swimming (partly, so the axis-aligned hitbox stays close), with a slow sway
+  const yaw = Math.atan2(bossVel.x, bossVel.z) * 0.4 + Math.sin(b.age * 3) * 0.08;
+  b.mesh.rotation.y += (yaw - b.mesh.rotation.y) * Math.min(dt * 8, 1);
+  if (b.flash > 0 && (b.flash -= dt) <= 0) setBossFlash(b, false); else if (b.flash > 0) setBossFlash(b, true);
+  if (p.z > lossZ) { hp = 0; drawHp(); } // the boss getting halfway past the line ends the game
+}
+
+// --- loop ---
+const clock = new THREE.Clock(), bar = document.getElementById('bar'), ahead = new THREE.Vector3();
+// Touch screens held taller than wide pause the game. maxTouchPoints, not (pointer: coarse): some Android
+// browsers (stylus phones, Samsung Internet desktop mode) report a fine pointer and slipped past the CSS check.
+const touch = navigator.maxTouchPoints > 0 || matchMedia('(any-pointer: coarse)').matches;
+const paused = { get matches() { return touch && innerHeight > innerWidth; } };
+renderer.setAnimationLoop(() => {
+  document.body.classList.toggle('sideways', paused.matches);
+  if (paused.matches) { clock.getDelta(); charging = false; return; } // frozen; discard the elapsed time so nothing jumps on resume
+  const dt = Math.min(clock.getDelta(), 0.05);
+  reload -= dt;
+  turret.rotation.y = Math.atan2(-aimDir.x, -aimDir.z) - player.rotation.y; // turret angle is relative to the hull
+
+  if (charging) {
+    if (reload <= 0) charge = Math.min(charge + dt / CHARGE_TIME, 1); // range holds at minimum while reloading
+    landingPoint(marker.position).y = 1; // half the wall height, so it stands on the water
+    marker.visible = true;
+  }
+  bar.style.width = (charging ? charge * 100 : 0) + '%';
+
+  if (hp > 0 && (spawnTimer -= dt) <= 0) {
+    if (spawned < TOTAL_SHIPS) { if (spawnEnemy()) { spawned++; spawnTimer = SPAWN_EVERY; } }
+    else if (!boss && !won) spawnBoss();
+  }
+  if (boss && hp > 0) updateBoss(boss, dt);
+
+  // Move front-most first; a faster ship catching up in the same lane follows GAP behind,
+  // and steers to a free side lane to overtake.
+  enemies.sort((a, b) => b.mesh.position.z - a.mesh.position.z);
+  enemies.forEach((e, i) => {
+    const p = e.mesh.position;
+    let z = p.z + e.speed * dt, blocker = null;
+    for (let j = 0; j < i; j++) {
+      const o = enemies[j], q = o.mesh.position, limit = q.z - o.halfD - e.halfD - GAP;
+      if (Math.abs(p.x - q.x) < e.halfW + o.halfW + GAP && limit < z) { z = limit; blocker = o; }
+    }
+    p.z = Math.max(p.z, z);
+    if (blocker && e.tx === p.x) e.tx = pickLane(e, blocker, enemies) ?? p.x;
+    const step = LANE_SPEED * dt, dx = e.tx - p.x;
+    p.x = Math.abs(dx) <= step ? e.tx : p.x + Math.sign(dx) * step;
+  });
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.mesh.position.z > lossZ) { scene.remove(e.mesh); enemies.splice(i, 1); hp = Math.max(hp - 1, 0); drawHp(); addSunk(); }
+  }
+
+  for (let i = shells.length - 1; i >= 0; i--) {
+    const s = shells[i];
+    s.t = Math.min(s.t + dt / s.dur, 1);
+    arc(s.from, s.to, s.t, s.mesh.position);
+    if (s.t < 0.99) s.mesh.lookAt(arc(s.from, s.to, s.t + 0.01, ahead)); // nose along the flight path
+    if (s.t === 1) { explode(s.to); scene.remove(s.mesh); shells.splice(i, 1); }
+  }
+
+  // blasts: fireball flashes out and fades fast; smoke swells, rises and lingers
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const b = blasts[i];
+    b.t = Math.min(b.t + dt / BLAST_TIME, 1);
+    const flash = Math.min(b.t * 3, 1);
+    b.fire.scale.setScalar(b.size * (0.3 + 0.7 * (1 - (1 - flash) ** 2)));
+    b.fire.material.opacity = 1 - Math.min(b.t * 2.5, 1);
+    b.smoke.scale.setScalar(b.size * (0.3 + 0.6 * b.t));
+    b.smoke.position.y = b.size * b.t;
+    b.smoke.material.opacity = 0.8 * (1 - b.t);
+    if (b.t === 1) { scene.remove(b.mesh); blasts.splice(i, 1); }
+  }
+
+  // ripples: each ring grows from the impact point out past the splash radius while fading
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    r.t = Math.min(r.t + dt / RIPPLE_TIME, 1);
+    r.rings.forEach((m, k) => {
+      const u = clamp01((r.t - k * 0.2) / 0.6); // ring k starts at 0.2·k and lasts 60% of the ripple
+      m.visible = u > 0 && u < 1;
+      m.scale.setScalar(SPLASH * (0.2 + 1.1 * (1 - (1 - u) ** 2))); // fast out, then easing
+      m.material.opacity = 0.85 * (1 - u);
+    });
+    if (r.t === 1) { r.rings.forEach(m => { scene.remove(m); m.material.dispose(); }); ripples.splice(i, 1); }
+  }
+
+  // death animation: coast to a stop, roll over, dip the bow and slip under
+  for (let i = sinking.length - 1; i >= 0; i--) {
+    const w = sinking[i], m = w.mesh;
+    w.t = Math.min(w.t + dt / SINK_TIME, 1);
+    m.position.z += w.speed * (1 - w.t) ** 2 * dt;
+    m.position.y = -(w.height + 0.5) * w.t ** 2;
+    m.rotation.set(0.25 * w.t, 0, w.roll * Math.min(w.t * 2, 1)); // +x tilts the bow (+z) down
+    if (w.t === 1) { scene.remove(m); sinking.splice(i, 1); }
+  }
+
+  if (hp <= 0 && !overShown) { overShown = true;
+    record(rating(), score);
+    showBanner('GAME OVER', `SUNK ${score}`, 'over');
+    records.show(bannerEl.querySelector('span'), rating(), GOALS);
+  }
+  text.textContent = hp <= 0 ? `GAME OVER — Sunk: ${score}`
+    : won ? `VICTORY — the Leviathan is down! Sunk: ${score}`
+    : boss ? `Sunk: ${score} — the Leviathan approaches!`
+    : `Sunk: ${score} · Ships left: ${TOTAL_SHIPS - spawned} — hold to charge, release to fire`;
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
