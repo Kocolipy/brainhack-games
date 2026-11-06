@@ -1,7 +1,7 @@
 """Build low-poly assets for Artillery Defence.
 
 Run headless:  blender.exe -b --python make_assets.py -- <assets_dir>
-Writes player.glb (objects "Hull" + "Turret"), enemy_small/medium/large.glb, shell.glb,
+Writes player.glb (objects "Hull" + "Turret", with child "Barrel"), enemy_small/medium/large.glb, shell.glb,
 explosion.glb (objects "Fireball" + "Smoke"), ships.blend, preview.png, preview_player.png.
 
 Conventions: 1 unit ~ 8 m (lengths exaggerated for readability), origin at waterline centre.
@@ -195,8 +195,18 @@ hull_obj = join("Hull", [
     quad("DeckFlag", [(0.6, -5.9, D + 0.01), (0.6, -4.1, D + 0.01), (-0.6, -4.1, D + 0.01), (-0.6, -5.9, D + 0.01)], flag),
     # stern ensign streaming straight aft, broadside to the camera
     quad("Ensign", [(0, -6.2, D + 0.85), (0, -6.95, D + 0.85), (0, -6.95, D + 1.35), (0, -6.2, D + 1.35)], flag),
+    # flag painted on the bridge's starboard face (the side the 3D game's camera sees), just proud of the sloped wall:
+    # the wall leans in from x = 1.1 at the deck to 0.88 at the roof (Bridge block above)
+    quad("BridgeFlag", [(1.074, 0.375, D + 0.25), (1.074, 1.425, D + 0.25), (0.946, 1.425, D + 0.95), (0.946, 0.375, D + 0.95)], flag),
 ])
-turret = join("Turret", gun("Turret", 0, 0, 1.3, rsn_light, black))
+cupola, barrel = gun("Turret", 0, 0, 1.3, rsn_light, black)
+turret = join("Turret", [cupola])
+# barrel hangs off an empty "Barrel" at its breech, so the 3D game can elevate it (rotate Barrel about x)
+bpy.ops.object.empty_add(location=(0, 0.39, 0.364))  # breech: barrel centre y 1.43 minus half its 2.08 length
+pivot = bpy.context.object
+pivot.name = "Barrel"
+barrel.parent, barrel.location = pivot, (0, 1.04, 0)  # Python parenting keeps location relative to the parent
+pivot.parent = turret
 turret.location = (0, 4.2, D)  # pivot on the foredeck; the game rotates this object
 
 # ---------- enemies (bow built +Y, then turned to face -Y) ----------
@@ -285,7 +295,7 @@ assert 9.5 < kaiju.dimensions.x < 11, ("kaiju width", tuple(kaiju.dimensions))
 
 os.makedirs(out, exist_ok=True)
 p = lambda f: os.path.join(out, f)
-export(p("player.glb"), [hull_obj, turret])
+export(p("player.glb"), [hull_obj, turret, pivot, barrel])
 export(p("enemy_small.glb"), [small])
 export(p("enemy_medium.glb"), [medium])
 export(p("enemy_large.glb"), [large])
