@@ -148,7 +148,9 @@ scene.add(sea);
 
 // --- assets (glTF needs http://, not file://) ---
 const text = document.getElementById('text');
-const load = name => new GLTFLoader().loadAsync(`../artillery-defence/assets/${name}.glb`).then(g => g.scene);
+// ?v= busts phone caches still holding older models (the old player.glb has no Barrel); bump it whenever the models change
+const ASSETS_VERSION = 2;
+const load = name => new GLTFLoader().loadAsync(`../artillery-defence/assets/${name}.glb?v=${ASSETS_VERSION}`).then(g => g.scene);
 const [player, shellModel, blastModel, bossModel, ...enemyModels] = await Promise.all(
   ['player', 'shell', 'explosion', 'kaiju', ...ENEMY_TYPES.map(t => t.file)].map(load)
 ).catch(err => {
