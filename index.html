@@ -36,6 +36,10 @@
     <div class="thumb"><img class="tall" src="thumbs/defend-zero-days.jpg" alt="Defend Zero Days gameplay"><span class="arm dis">DIS</span></div>
     <div class="info"><h2>Defend Zero Days</h2><p>Patch your infrastructure before zero-day exploits bring the system down.</p><span class="tag">Portrait</span><div class="best"></div></div>
   </a>
+  <a href="breach-run/">
+    <div class="thumb"><img src="thumbs/breach-run.jpg" alt="Breach Run gameplay"><span class="arm dis">DIS</span></div>
+    <div class="info"><h2>Breach Run</h2><p>Steer a virus past firewalls, honeypots and antivirus scanners to infect the server.</p><span class="tag">Landscape</span><div class="best"></div></div>
+  </a>
   <a href="saf-transport/">
     <div class="thumb"><img src="thumbs/saf-transport.jpg" alt="SAF Transport gameplay"><span class="arm army">ARMY</span></div>
     <div class="info"><h2>SAF Transport</h2><p>Drive an army truck around SAFTI City and make deliveries against the clock.</p><span class="tag">Landscape</span><div class="best"></div></div>
@@ -55,6 +59,7 @@
 const s = t => t.toFixed(1) + '\u00a0s';  // no-break space: keep the unit with its number
 const BEST = {
   'defend-zero-days': r => r.days != null && `Best: ${r.days} day${r.days === 1 ? '' : 's'} · ${r.patched} patched`,
+  'breach-run': r => r.pct != null && `Best: ${r.pct}%`,
   'saf-transport': r => r.score != null && `Best: ${r.score.toLocaleString()} · ${r.delivered} deliveries`,
   'tackle-drones': r => (r.easy || r.hard) && 'Fastest: ' + [r.easy && `Easy ${s(r.easy)}`, r.hard && `Hard ${s(r.hard)}`].filter(Boolean).join(' · '),
   'artillery-defence': r => r.sunk != null && `Most sunk: ${r.sunk}`,
