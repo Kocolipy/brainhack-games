@@ -52,6 +52,10 @@
     <div class="thumb"><img class="tall" src="thumbs/artillery-defence.jpg" alt="Artillery Defence gameplay"><span class="arm navy">NAVY</span></div>
     <div class="info"><h2>Artillery Defence</h2><p>Defend the coast from incoming warships with your frigate's gun.</p><span class="tag">Portrait</span><div class="best"></div></div>
   </a>
+  <a href="artillery-defence-3d/">
+    <div class="thumb"><img src="thumbs/artillery-defence-3d.jpg" alt="Artillery Defence 3D gameplay"><span class="arm navy">NAVY</span></div>
+    <div class="info"><h2>Artillery Defence 3D</h2><p>Man the frigate's gun and shell the warships closing in from the horizon.</p><span class="tag">Landscape</span><div class="best"></div></div>
+  </a>
 </main>
 <script src="records.js"></script>
 <script>
@@ -63,6 +67,7 @@ const BEST = {
   'saf-transport': r => r.score != null && `Best: ${r.score.toLocaleString()} · ${r.delivered} deliveries`,
   'tackle-drones': r => (r.easy || r.hard) && 'Fastest: ' + [r.easy && `Easy ${s(r.easy)}`, r.hard && `Hard ${s(r.hard)}`].filter(Boolean).join(' · '),
   'artillery-defence': r => r.sunk != null && `Most sunk: ${r.sunk}`,
+  'artillery-defence-3d': r => r.sunk != null && `Most sunk: ${r.sunk}`,
 };
 for (const a of document.querySelectorAll('main a')) {
   const game = a.getAttribute('href').replace('/', ''), r = records.get(game);
