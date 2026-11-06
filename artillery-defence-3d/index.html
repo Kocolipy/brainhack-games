@@ -166,7 +166,8 @@ const ship = new THREE.Group().add(player);
 ship.position.z = PLAYER_Z; // on the wrapper, so the sinking roll pivots on the ship itself
 scene.add(ship);
 ship.updateMatrixWorld(true);
-const turret = player.getObjectByName('Turret');
+const turret = player.getObjectByName('Turret'), barrel = turret.getObjectByName('Barrel');
+const MIN_ELEV = 0.08, MAX_ELEV = 0.6, BARREL_DROP = 2.5; // barrel elevation (radians) at no charge / full charge; settle-back rate per second
 // one burning spot per heart lost, in the model's own coordinates (bow -z, deck y = 1): foredeck, bridge roof, hangar roof
 const DAMAGE_SPOTS = [new THREE.Vector3(0, 1.2, -2.5), new THREE.Vector3(0, 2.3, -0.9), new THREE.Vector3(0, 2.1, 2.2)];
 const BURN_EVERY = 0.3, BURN_SIZE = 0.7, PLAYER_SINK_TIME = 3; // seconds between fire/smoke puffs per spot, puff size; game-over sinking
@@ -452,6 +453,9 @@ renderer.setAnimationLoop(() => {
     marker.visible = true;
   }
   bar.style.width = (charging ? charge * 100 : 0) + '%';
+  // +x lifts the muzzle; it rises with the charge but settles back slowly after a shot instead of snapping down
+  const elev = MIN_ELEV + (MAX_ELEV - MIN_ELEV) * (charging ? charge : 0);
+  barrel.rotation.x = elev > barrel.rotation.x ? elev : barrel.rotation.x + (elev - barrel.rotation.x) * Math.min(dt * BARREL_DROP, 1);
 
   if (hp > 0 && (spawnTimer -= dt) <= 0) {
     if (spawned < TOTAL_SHIPS) { if (spawnEnemy()) { spawned++; spawnTimer = SPAWN_EVERY; } }
