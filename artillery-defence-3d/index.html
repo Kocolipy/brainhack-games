@@ -21,16 +21,15 @@
   #bossbar { height: 10px; margin-top: 4px; border: 2px solid #fc8; }
   #bossfill { height: 100%; width: 100%; background: #e60; transition: width 0.15s; }
   /* full-width announcement band: .danger (boss arrival) or .over (game over) */
-  #banner { position: absolute; top: 38%; left: 0; right: 0; padding: 14px 0; text-align: center; color: #fff;
+  #banner { position: absolute; top: 50%; transform: translateY(-50%); left: 0; right: 0; padding: 8px 0; text-align: center; color: #fff;
             background: rgba(0, 0, 0, 0.65); pointer-events: none; display: none; }
-  #banner b { display: block; font: 900 clamp(32px, 12vw, 56px) sans-serif; letter-spacing: 4px; }
+  #banner b { display: block; font: 900 clamp(26px, 11vh, 56px) sans-serif; letter-spacing: 4px; }
   #banner > span { display: block; margin-top: 4px; font: bold 15px sans-serif; letter-spacing: 3px; }
-  #restart, #back { display: none; width: fit-content; margin: 14px auto 2px; text-decoration: none; padding: 12px 32px; font: bold 18px sans-serif; letter-spacing: 3px;
+  #restart, #back { display: none; width: fit-content; margin: 8px 6px 2px; text-decoration: none; padding: 12px 32px; font: bold 18px sans-serif; letter-spacing: 3px;
              color: var(--accent); background: rgba(255, 255, 255, 0.06); border: 2px solid var(--accent);
              border-radius: 4px; cursor: pointer; pointer-events: auto; }
   #restart:active, #back:active { color: #0a1a28; background: var(--accent); }
-  #banner.over :is(#restart, #back), #banner.win :is(#restart, #back) { display: block; }
-  #back { margin-top: 8px; }
+  #banner.over :is(#restart, #back), #banner.win :is(#restart, #back) { display: inline-block; vertical-align: top; }
   #banner.danger { border-block: 8px solid; border-image: repeating-linear-gradient(-45deg, #fc0 0 14px, #111 14px 28px) 8; }
   #banner.danger b { color: #f33; animation: blink 0.5s steps(1) infinite; }
   #banner.over { --accent: #f44; }
@@ -38,7 +37,7 @@
   #banner.win { border-block: 4px solid #fc4; }
   #banner.win { --accent: #fd4; }
   #banner.win b { color: var(--accent); }
-  #banner.flawless b { font-size: clamp(24px, 8vw, 40px); text-shadow: 0 0 12px #fd4; }
+  #banner.flawless b { font-size: clamp(22px, 8vh, 40px); text-shadow: 0 0 12px #fd4; }
   #game.bossfight #hud { display: none; }
   #game.bossfight #boss { top: 14px; }
   @keyframes blink { 50% { opacity: 0.25; } }
